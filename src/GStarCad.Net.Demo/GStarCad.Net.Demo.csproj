@@ -10,7 +10,7 @@
   <ItemGroup>
     <PackageReference Include="GStarCad.Net" Version="20.22.0" />
     <PackageReference Include="log4net" Version="3.3.2" />
-    <Reference Include="Microsoft.CSharp" />
+    <Reference Include="System.Windows.Forms" />
   </ItemGroup>
 
   <ItemGroup>
