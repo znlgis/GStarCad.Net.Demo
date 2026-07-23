@@ -4,7 +4,6 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Reflection;
-using System.Threading;
 using GrxCAD.ApplicationServices;
 using GrxCAD.DatabaseServices;
 using GrxCAD.EditorInput;
@@ -57,9 +56,7 @@ namespace GStarCad.Net.Demo.Commands
 
             // Step 1: Export STL
             ed.WriteMessage("\n[1/4] 导出STL网格...");
-            ExportStl(doc, stlPath);
-
-            if (!WaitForFile(stlPath, 100, 30000))
+            if (!ExportStl(doc, stlPath))
             {
                 ed.WriteMessage("\nSTL导出失败: 文件未生成.");
                 return;
@@ -211,28 +208,22 @@ namespace GStarCad.Net.Demo.Commands
             return lt[name];
         }
 
-        private static void ExportStl(Document doc, string stlPath)
+        private static bool ExportStl(Document doc, string stlPath)
         {
-            var ed = doc.Editor;
-            ed.Command("_.FILEDIA", 0);
-
-            doc.SendStringToExecute(
-                string.Format("_.EXPORT\n{0}\n_.FILEDIA 1 ",
-                    stlPath.Replace('\\', '/')),
-                false, false, false);
-        }
-
-        private static bool WaitForFile(string path, long minSizeBytes, int timeoutMs)
-        {
-            var deadline = DateTime.Now.AddMilliseconds(timeoutMs);
-            while (DateTime.Now < deadline)
+            try
             {
-                System.Windows.Forms.Application.DoEvents();
-                if (File.Exists(path) && new FileInfo(path).Length >= minSizeBytes)
-                    return true;
-                Thread.Sleep(200);
+                var ed = doc.Editor;
+                ed.Command("_.FILEDIA", 0);
+                ed.Command("_.EXPORT", stlPath.Replace('\\', '/'));
+                ed.Command("_.FILEDIA", 1);
+
+                return File.Exists(stlPath) && new FileInfo(stlPath).Length >= 100;
             }
-            return false;
+            catch (Exception)
+            {
+                // EXPORT may fail on invalid extension; continue with empty result
+                return false;
+            }
         }
 
         private int RunOCCTTool(string stlPath, string csvPath, Editor ed)

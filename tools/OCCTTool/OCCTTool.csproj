@@ -6,7 +6,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Reference Include="OCCTProxy">
-      <HintPath>D:\self\code\OCCT-samples-csharp\win64\vc14\bind\OCCTProxy.dll</HintPath>
+      <HintPath>D:\self\code\OCCT-samples-csharp\win64\vc14\bin\OCCTProxy.dll</HintPath>
     </Reference>
   </ItemGroup>
 </Project>
