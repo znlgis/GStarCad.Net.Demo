@@ -6,13 +6,13 @@ using GrxCAD.Runtime;
 using System;
 using System.Globalization;
 using System.IO;
-using System.Reflection;
 
 namespace GStarCad.Net.Demo.Commands
 {
     public class ViewsExportCommand
     {
         private const double ViewScaleFactor = 1.5;
+
         [CommandMethod("VIEWEXPORT")]
         public void ViewsExport()
         {
@@ -86,21 +86,12 @@ namespace GStarCad.Net.Demo.Commands
             {
                 try
                 {
-                    GenerateViewByCOM(doc, center, view.Dir, minPt.Value, maxPt.Value);
-                    ed.WriteMessage(string.Format("\n{0} — COM方式生成成功.", view.Name));
+                    SendSectionPlaneCommand(doc, center, view.Dir, minPt.Value, maxPt.Value);
+                    ed.WriteMessage(string.Format("\n{0} — 生成成功.", view.Name));
                 }
                 catch (System.Exception ex)
                 {
-                    ed.WriteMessage(string.Format("\n{0} — COM方式失败: {1}", view.Name, ex.Message));
-                    try
-                    {
-                        GenerateViewBySendCommand(doc, center, view.Dir, minPt.Value, maxPt.Value);
-                        ed.WriteMessage(string.Format("\n{0} — SendCommand方式生成成功.", view.Name));
-                    }
-                    catch (System.Exception ex2)
-                    {
-                        ed.WriteMessage(string.Format("\n{0} — SendCommand方式也失败: {1}", view.Name, ex2.Message));
-                    }
+                    ed.WriteMessage(string.Format("\n{0} — 失败: {1}", view.Name, ex.Message));
                 }
             }
 
@@ -126,70 +117,7 @@ namespace GStarCad.Net.Demo.Commands
             ed.WriteMessage(string.Format("\n视图导出完成. 输出文件: {0}", outputPath));
         }
 
-        private void GenerateViewByCOM(Document doc, Point3d center, Vector3d dir,
-            Point3d minPt, Point3d maxPt)
-        {
-            dynamic comDoc = doc.AcadDocument;
-            var normal = dir.GetNormal();
-
-            Vector3d uRef = Math.Abs(normal.X) < 0.9 ? Vector3d.XAxis : Vector3d.ZAxis;
-            Vector3d u = normal.CrossProduct(uRef).GetNormal();
-            var halfSize = center.DistanceTo(maxPt) * ViewScaleFactor;
-
-            var fromPt = center + u * halfSize;
-            var toPt = center - u * halfSize;
-            var viewSide = center + normal * halfSize;
-
-            double[] fromArr = { fromPt.X, fromPt.Y, fromPt.Z };
-            double[] toArr = { toPt.X, toPt.Y, toPt.Z };
-            double[] viewArr = { viewSide.X, viewSide.Y, viewSide.Z };
-
-            dynamic section = comDoc.ModelSpace.AddSection(fromArr, toArr, viewArr);
-            if (section == null)
-            {
-                throw new InvalidOperationException("COM AddSection returned null.");
-            }
-
-            try
-            {
-                section.Enabled = true;
-            }
-            catch
-            {
-                // COM Enabled property may not be supported on all versions; non-fatal.
-            }
-
-            object sectionObj = (object)section;
-            Type sectionType = sectionObj.GetType();
-
-            object[] args = new object[6];
-            args[0] = sectionObj;  // pEntity: section plane itself
-            args[1] = null;  // pIntersectionBoundaryObjs (ref)
-            args[2] = null;  // pIntersectionFillObjs (ref)
-            args[3] = null;  // pBackgroudnObjs (ref)
-            args[4] = null;  // pForegroudObjs (ref)
-            args[5] = null;  // pCurveTangencyObjs (ref)
-
-            ParameterModifier[] mods = new ParameterModifier[1];
-            mods[0] = new ParameterModifier(6);
-            mods[0][1] = true;
-            mods[0][2] = true;
-            mods[0][3] = true;
-            mods[0][4] = true;
-            mods[0][5] = true;
-
-            sectionType.InvokeMember(
-                "GenerateSectionGeometry",
-                BindingFlags.InvokeMethod,
-                null,
-                sectionObj,
-                args,
-                mods,
-                null,
-                null);
-        }
-
-        private void GenerateViewBySendCommand(Document doc, Point3d center, Vector3d dir,
+        private void SendSectionPlaneCommand(Document doc, Point3d center, Vector3d dir,
             Point3d minPt, Point3d maxPt)
         {
             var normal = dir.GetNormal();
