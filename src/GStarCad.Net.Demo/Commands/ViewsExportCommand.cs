@@ -10,7 +10,6 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Reflection;
-using System.Threading;
 
 namespace GStarCad.Net.Demo.Commands
 {
@@ -114,15 +113,23 @@ namespace GStarCad.Net.Demo.Commands
             Log.Debug(string.Format("Temp dir: {0}, files: 3D={1}, 2D={2}, DWG={3}",
                 tempDir, tempStep3D, tempStep2D, outputPath));
 
-            dynamic comDoc = doc.AcadDocument;
+            // Ensure current document is saved before external process access
+            var currentDwg = db.Filename;
+            if (!string.IsNullOrEmpty(currentDwg) && !File.Exists(currentDwg))
+            {
+                currentDwg = Path.Combine(tempDir, originalName + "_save.dwg");
+                Log.Debug(string.Format("Document has no file path, saving to: {0}", currentDwg));
+                try { db.SaveAs(currentDwg, DwgVersion.Current); }
+                catch (System.Exception ex) { Log.Warn("SaveAs failed, continuing", ex); }
+            }
 
-            // Step 1: Export selected 3D solids to STEP
+            // Step 1: Export selected 3D solids to STEP via isolated GStarCAD process
             var stepSw = Stopwatch.StartNew();
             ed.WriteMessage("\n[1/3] 导出3D STEP...");
-            Log.Debug("Step 1: Exporting 3D STEP...");
+            Log.Debug("Step 1: Exporting 3D STEP via script...");
             try
             {
-                if (!ExportToStep(comDoc, handles, tempStep3D, ed))
+                if (!ExportToStep(currentDwg, handles, tempStep3D, tempDir, ed))
                 {
                     stepSw.Stop();
                     Log.Error(string.Format("Step 1 failed after {0}ms", stepSw.ElapsedMilliseconds));
@@ -211,89 +218,84 @@ namespace GStarCad.Net.Demo.Commands
                 "\n视图导出完成. 输出文件: {0}", outputPath));
         }
 
-        private bool ExportToStep(dynamic comDoc, List<string> handles, string stepPath, Editor ed)
+        private bool ExportToStep(string dwgPath, List<string> handles, string stepPath, string tempDir, Editor ed)
         {
-            Log.Debug(string.Format("ExportToStep: {0} handles => {1}", handles.Count, stepPath));
+            Log.Debug(string.Format("ExportToStep (isolated process): {0} handles => {1}", handles.Count, stepPath));
 
-            const int maxRetries = 2;
-            const int waitMs = 500;
-
-            for (int attempt = 0; attempt < maxRetries; attempt++)
+            if (string.IsNullOrEmpty(dwgPath) || !File.Exists(dwgPath))
             {
-                Log.Debug(string.Format("ExportToStep attempt {0}/{1}", attempt + 1, maxRetries));
-                try
-                {
-                    dynamic ss = null;
-                    try
-                    {
-                        ss = comDoc.SelectionSets.Item("OCCT_SS");
-                        ss.Delete();
-                        Log.Debug("Deleted existing OCCT_SS selection set.");
-                    }
-                    catch
-                    {
-                        Log.Debug("No existing OCCT_SS to delete.");
-                    }
-
-                    Log.Debug("Creating COM SelectionSet 'OCCT_SS'...");
-                    ss = comDoc.SelectionSets.Add("OCCT_SS");
-                    Log.Debug(string.Format("SelectionSet created, adding {0} items via HandleToObject...", handles.Count));
-                    var items = new object[handles.Count];
-                    for (int i = 0; i < handles.Count; i++)
-                    {
-                        items[i] = comDoc.HandleToObject(handles[i]);
-                    }
-                    ss.AddItems(items);
-                    Log.Debug("Items added to SelectionSet.");
-
-                    Log.Debug(string.Format("Calling comDoc.Export to '{0}'...", stepPath));
-                    comDoc.Export(stepPath, "STEP", ss);
-                    Log.Debug("comDoc.Export returned.");
-
-                    ss.Delete();
-
-                    if (File.Exists(stepPath))
-                    {
-                        Log.Debug("ExportToStep succeeded: STEP file exists.");
-                        return true;
-                    }
-                    Log.Warn("ExportToStep: COM Export succeeded but no output file found.");
-                }
-                catch (System.Exception ex)
-                {
-                    Log.Warn(string.Format("ExportToStep attempt {0} COM Export threw: {1}", attempt + 1, ex.Message));
-                    if (attempt == maxRetries - 1)
-                    {
-                        try
-                        {
-                            Log.Debug("Fallback: using SendCommand EXPORT...");
-                            var cmd = string.Format(CultureInfo.InvariantCulture,
-                                "_-EXPORT {0} ", stepPath);
-                            comDoc.SendCommand(cmd);
-                            Thread.Sleep(waitMs * 2);
-                            comDoc.SendCommand(" ");
-                            Thread.Sleep(waitMs * 2);
-                            comDoc.SendCommand(" ");
-                            Thread.Sleep(waitMs);
-
-                            if (File.Exists(stepPath))
-                            {
-                                Log.Debug("Fallback SendCommand EXPORT succeeded.");
-                                return true;
-                            }
-                            Log.Warn("Fallback SendCommand EXPORT failed: no output file.");
-                        }
-                        catch (System.Exception fallbackEx)
-                        {
-                            Log.Error("Fallback SendCommand EXPORT threw exception", fallbackEx);
-                            ed.WriteMessage(string.Format("\nCOM Export失败: {0}", fallbackEx.Message));
-                        }
-                    }
-                }
+                Log.Error(string.Format("Source DWG not found or not saved: {0}", dwgPath));
+                ed.WriteMessage("\n请先保存当前文档.");
+                return false;
             }
 
-            Log.Error("ExportToStep failed: all attempts exhausted.");
-            return File.Exists(stepPath);
+            var gcadExe = Process.GetCurrentProcess().MainModule.FileName;
+            var scriptPath = Path.Combine(tempDir, "_gcad_export.scr");
+            Log.Debug(string.Format("GStarCAD exe: {0}", gcadExe));
+
+            // Build LISP selection set from entity handles
+            var ssInit = "(setq ss (ssadd))";
+            var ssAdds = new System.Text.StringBuilder();
+            ssAdds.Append(ssInit);
+            foreach (var h in handles)
+            {
+                ssAdds.AppendFormat(CultureInfo.InvariantCulture,
+                    " (ssadd (handent \"{0}\") ss)", h);
+            }
+
+            var script = string.Format(CultureInfo.InvariantCulture,
+                "FILEDIA 0\n_.OPEN \"{0}\"\n{1}\n(if ss (command \"_.-EXPORT\" \"{2}\" \"STEP\" ss))\n_.QUIT Y\n",
+                dwgPath, ssAdds.ToString(), stepPath);
+
+            Log.Debug(string.Format("Script ({0} bytes): {1}", script.Length, script.Replace("\n", "\\n")));
+            File.WriteAllText(scriptPath, script, System.Text.Encoding.ASCII);
+
+            var psi = new ProcessStartInfo
+            {
+                FileName = gcadExe,
+                Arguments = string.Format("/b \"{0}\"", scriptPath),
+                UseShellExecute = true,
+                WindowStyle = ProcessWindowStyle.Minimized,
+            };
+
+            try
+            {
+                using (var proc = Process.Start(psi))
+                {
+                    if (proc == null)
+                    {
+                        Log.Error("ExportToStep: Process.Start returned null.");
+                        TryDeleteFile(scriptPath);
+                        return false;
+                    }
+
+                    Log.Debug(string.Format("Export process PID={0}, waiting...", proc.Id));
+
+                    if (!proc.WaitForExit(60000))
+                    {
+                        Log.Error("ExportToStep: process timed out.");
+                        ed.WriteMessage("\n3D STEP导出超时.");
+                        try { proc.Kill(); } catch { }
+                        TryDeleteFile(scriptPath);
+                        return false;
+                    }
+
+                    Log.Debug(string.Format("Export process exited code={0}", proc.ExitCode));
+                }
+            }
+            catch (System.Exception ex)
+            {
+                Log.Error("ExportToStep: process launch failed.", ex);
+                TryDeleteFile(scriptPath);
+                return false;
+            }
+
+            TryDeleteFile(scriptPath);
+
+            var result = File.Exists(stepPath);
+            Log.Debug(string.Format("ExportToStep result: {0} (size={1})",
+                result, result ? new FileInfo(stepPath).Length.ToString() : "N/A"));
+            return result;
         }
 
         private int RunOCCTTool(string inputStep, string outputStep, Editor ed)
