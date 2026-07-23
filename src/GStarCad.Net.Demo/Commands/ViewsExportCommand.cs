@@ -158,7 +158,14 @@ namespace GStarCad.Net.Demo.Commands
                 // COM Enabled property may not be supported on all versions; non-fatal.
             }
 
-            section.GenerateSectionGeometry(0);
+            try
+            {
+                section.GenerateSectionGeometry();
+            }
+            catch
+            {
+                section.GenerateSectionGeometry(Type.Missing);
+            }
         }
 
         private void GenerateViewBySendCommand(Document doc, Point3d center, Vector3d dir,
