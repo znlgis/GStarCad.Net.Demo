@@ -116,35 +116,49 @@ namespace GStarCad.Net.Demo.Commands
             Log.Debug(string.Format("Temp dir: {0}, files: 3D={1}, 2D={2}, DWG={3}",
                 tempDir, tempStep3D, tempStep2D, outputPath));
 
-            // Step 1: Export 3D solids via script-based ACISOUT (GStarCAD Editor.Command
-            //          can't pass _ALL selection reliably), then convert SAT→STEP.
+            // Step 1: Export 3D solids via SendStringToExecute + DoEvents polling.
+            // GStarCAD Editor.Command rejects _ALL keyword; SCRIPT command is ignored;
+            // SendStringToExecute queues commands but DoEvents pumps the message queue
+            // so they execute inside the CommandMethod.
             var stepSw = Stopwatch.StartNew();
             ed.WriteMessage("\n[1/3] 导出3D STEP...");
-            Log.Debug("Step 1: ACISOUT via script...");
+            Log.Debug("Step 1: SendStringToExecute + DoEvents export...");
             try
             {
-                // 1a) Write and run ACISOUT script
-                var acisScript = Path.Combine(tempDir, "_acisout.scr");
-                var acisContent = string.Format(CultureInfo.InvariantCulture,
-                    "_.FILEDIA 0\n_.ACISOUT\n_ALL\n\n{0}\n",
-                    satPath.Replace('\\', '/'));
-                File.WriteAllText(acisScript, acisContent);
-                Log.Debug(string.Format("ACISOUT script: {0}", acisContent.Replace("\n", "\\n")));
+                ed.Command("_.FILEDIA", 0);
 
-                ed.Command("_.SCRIPT", acisScript.Replace('\\', '/'));
-                TryDeleteFile(acisScript);
+                doc.SendStringToExecute(
+                    string.Format("_.ACISOUT _ALL\n\n{0}\n_.FILEDIA 1 ",
+                        satPath.Replace('\\', '/')),
+                    false, false, false);
+
+                // Pump messages so GStarCAD processes the queued commands
+                var deadline = DateTime.Now.AddSeconds(30);
+                while (DateTime.Now < deadline)
+                {
+                    System.Windows.Forms.Application.DoEvents();
+                    if (File.Exists(satPath) && new FileInfo(satPath).Length > 100)
+                        break;
+                    System.Threading.Thread.Sleep(200);
+                }
 
                 if (!File.Exists(satPath) || new FileInfo(satPath).Length < 100)
                 {
                     // Try EXPORT STL as fallback
                     Log.Warn("ACISOUT failed, trying EXPORT STL...");
-                    var stlScript = Path.Combine(tempDir, "_stlexport.scr");
-                    var stlContent = string.Format(CultureInfo.InvariantCulture,
-                        "_.FILEDIA 0\n_.EXPORT\n{0}\n_ALL\n\n",
-                        stlPath.Replace('\\', '/'));
-                    File.WriteAllText(stlScript, stlContent);
-                    ed.Command("_.SCRIPT", stlScript.Replace('\\', '/'));
-                    TryDeleteFile(stlScript);
+                    doc.SendStringToExecute(
+                        string.Format("_.EXPORT\n{0}\n_ALL\n\n_.FILEDIA 1 ",
+                            stlPath.Replace('\\', '/')),
+                        false, false, false);
+
+                    deadline = DateTime.Now.AddSeconds(30);
+                    while (DateTime.Now < deadline)
+                    {
+                        System.Windows.Forms.Application.DoEvents();
+                        if (File.Exists(stlPath) && new FileInfo(stlPath).Length > 100)
+                            break;
+                        System.Threading.Thread.Sleep(200);
+                    }
 
                     if (File.Exists(stlPath) && new FileInfo(stlPath).Length > 100)
                     {
