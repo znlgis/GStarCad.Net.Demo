@@ -251,7 +251,7 @@ namespace GStarCad.Net.Demo.Commands
             var lispTempDwg = tempDwg.Replace('\\', '/');
 
             var script = string.Format(CultureInfo.InvariantCulture,
-                "FILEDIA 0\n_.OPEN \"{0}\"\n_.ZOOM _E\n" +
+                "SDI 0\nFILEDIA 0\n_.OPEN \"{0}\"\n_.ZOOM _E\n" +
                 "(setq ss (ssget \"_X\" '((0 . \"3DSOLID\"))))\n" +
                 "(if ss (command \"_.EXPORT\" \"{1}\" ss \"\"))\n" +
                 "_.QUIT Y\n",
