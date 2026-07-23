@@ -8,6 +8,7 @@
 - Windows 操作系统（7 / 10 / 11）
 - [.NET Framework 4.8 SDK](https://dotnet.microsoft.com/download/dotnet-framework/net48)（或 Visual Studio 2019/2022）
 - [GStarCAD 2022](https://www.gstarcad.com/) 已安装（默认路径 `C:\Program Files\GStarCAD\GStarCAD 2022`）
+- （可选）[Open CASCADE Technology 7.x](https://dev.opencascade.org/) — OCCTTool 外部工具依赖
 
 ## 技术栈
 
@@ -18,33 +19,49 @@
 | 构建工具 | .NET CLI / Visual Studio |
 | CAD 平台 | GStarCAD 2022 |
 | CAD API 包 | GStarCad.Net 20.22.0（MIT 许可证） |
+| 日志 | log4net 3.3.2 |
+| 3D 投影引擎 | Open CASCADE Technology 7.x（OCCTTool 外部工具） |
 
 ## 项目结构
 
 ```
 GStarCad.Net.Demo/
 ├── .vscode/
-│   └── tasks.json              # VS Code 构建与部署任务
+│   └── tasks.json                  # VS Code 构建与部署任务
+├── docs/
+│   ├── 3d-to-2d-export-research.md # 3D→2D 导出技术调研记录
+│   └── 3d-to-2d-export-blog.md     # 技术博客总结
 ├── src/
 │   └── GStarCad.Net.Demo/
 │       ├── Commands/
-│   │   ├── DrawEntityCommand.cs     # 绘图命令
-│   │   ├── HelloWorldCommand.cs     # 入门命令
-│   │   ├── ModifyEntityCommand.cs   # 修改实体命令
-│   │   └── ViewsExportCommand.cs    # 三维视图导出命令
+│       │   ├── DrawEntityCommand.cs     # 绘图命令
+│       │   ├── FlatExportCommand.cs     # FLATEXPORT 命令（实验性）
+│       │   ├── HelloWorldCommand.cs     # 入门命令
+│       │   ├── ModifyEntityCommand.cs   # 修改实体命令
+│       │   └── ViewsExportCommand.cs    # 三维视图导出命令
 │       ├── Properties/
 │       │   └── launchSettings.json      # VS 调试启动配置
 │       ├── ExtensionApplication.cs      # 插件入口点
-│       └── GStarCad.Net.Demo.csproj     # 项目文件 (SDK 风格)
-├── build.ps1                  # 构建与部署脚本
-├── GStarCad.Net.Demo.slnx     # 解决方案文件
-├── LICENSE                    # MIT 许可证
+│       ├── GStarCad.Net.Demo.csproj     # 项目文件 (SDK 风格)
+│       └── log4net.config               # 日志配置文件
+├── tools/
+│   └── OCCTTool/
+│       ├── app.config               # 工具配置文件
+│       ├── OCCTTool.csproj          # 项目文件
+│       └── Program.cs               # HLR 4 视图投影入口
+├── build.ps1                        # 构建与部署脚本
+├── GStarCad.Net.Demo.slnx           # 解决方案文件
+├── LICENSE                          # MIT 许可证
 └── README.md
 ```
 
+**外部依赖（非源码）：**
+- `OCCTProxy.dll` — C++/CLI 桥接 DLL，封装 Open CASCADE HLR API
+- Open CASCADE Technology 7.x 运行时库
+
 ## 演示命令
 
-插件注册了四个 `CommandMethod`，在浩辰 CAD 命令行输入对应命令即可执行。
+插件注册了五个 `CommandMethod`，在浩辰 CAD 命令行输入对应命令即可执行。
 
 ### HELLO -- 入门命令
 
@@ -87,7 +104,7 @@ GStarCad.Net.Demo/
 
 ### VIEWEXPORT -- 三维视图导出命令
 
-选择 3D 实体，生成前/后/左/右四个正交方向的 2D 平面投影，保存为 DWG 文件。
+选择 3D 实体，生成前/后/左/右四个正交方向的 2D 平面投影，保存为 2D STEP 文件。
 
 ```
 命令: VIEWEXPORT
@@ -96,9 +113,33 @@ GStarCad.Net.Demo/
 
 功能：
 - 交互式多选 3D 实体（3DSOLID）
-- 使用 COM Section API 生成四个正交方向的 2D 投影（前/后/左/右）
-- 输出到 `temp\{原文件名}_{时间戳}_views.dwg`
-- 若 COM API 不可用，自动回退到 `SECTIONPLANE` 原生命令
+- Step 1：`SendStringToExecute` + `DoEvents` 驱动 GStarCAD 后台导出 SAT/STL 中间文件
+- Step 2：独立 GStarCAD 进程将 SAT 转换为 STEP 格式
+- Step 3：调用外部工具 `OCCTTool.exe`（基于 Open CASCADE HLR）生成 4 视图 2D 投影
+- 输出到 `temp\{原文件名}_{时间戳}_views.stp`（2D STEP 文件）
+- 用户打开 STEP 文件后可用 `SaveAs` 转为 DWG 格式
+
+### FLATEXPORT -- 平面投影命令（实验性）
+
+实验性命令，使用 GStarCAD 原生 `FLATSHOT` + `VPOINT` 命令生成 2D 投影。
+
+```
+命令: FLATEXPORT
+```
+
+功能：
+- 切换视图到四个正交方向并执行 FLATSHOT
+- 当前状态：**未完全可用** — GStarCAD 的 FLATSHOT 对话框无法以编程方式抑制（缺乏 `-FLATSHOT` 命令行模式），导致流程中断
+- 保留作为参考实现，待官方 API 更新后可能恢复
+
+## 日志
+
+插件使用 log4net 3.3.2 记录运行日志。
+
+- 配置文件：`log4net.config`
+- 输出路径：`logs/GStarCad.Net.Demo.log`
+- 滚动策略：单个文件最大 10 MB，按日期滚动
+- 日志级别：DEBUG
 
 ## 快速开始
 
@@ -144,7 +185,7 @@ dotnet build src/GStarCad.Net.Demo/GStarCad.Net.Demo.csproj -c Debug
 
 ### 4. 测试命令
 
-加载成功后，在命令行依次输入 `HELLO`、`DRAWDEMO`、`MODIFYDEMO`、`VIEWEXPORT` 体验各命令功能。
+加载成功后，在命令行依次输入 `HELLO`、`DRAWDEMO`、`MODIFYDEMO`、`VIEWEXPORT`、`FLATEXPORT` 体验各命令功能。
 
 ## 调试
 
@@ -162,6 +203,11 @@ dotnet build src/GStarCad.Net.Demo/GStarCad.Net.Demo.csproj -c Debug
 
 - **build** (`Ctrl+Shift+B`)：执行 `dotnet build`
 - **deploy**：先构建，再执行 `build.ps1` 部署到 GStarCAD 插件目录
+
+## 文档
+
+- `docs/3d-to-2d-export-research.md` — 3D 到 2D 视图导出的完整技术调研记录，涵盖所有尝试方案、失败原因和 GStarCAD API 限制发现
+- `docs/3d-to-2d-export-blog.md` — 技术博客文章，总结 VIEWEXPORT / FLATEXPORT 的开发历程与选型决策
 
 ## 许可证
 
