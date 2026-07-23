@@ -3,6 +3,7 @@ using GrxCAD.DatabaseServices;
 using GrxCAD.EditorInput;
 using GrxCAD.Geometry;
 using GrxCAD.Runtime;
+using log4net;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -16,10 +17,14 @@ namespace GStarCad.Net.Demo.Commands
     public class ViewsExportCommand
     {
         private const int ToolTimeoutMs = 120000;
+        private static readonly ILog Log = LogManager.GetLogger(typeof(ViewsExportCommand));
 
         [CommandMethod("VIEWEXPORT")]
         public void ViewsExport()
         {
+            Log.Debug("ViewsExport() entered");
+            var sw = Stopwatch.StartNew();
+
             var doc = Application.DocumentManager.MdiActiveDocument;
             var db = doc.Database;
             var ed = doc.Editor;
@@ -33,6 +38,7 @@ namespace GStarCad.Net.Demo.Commands
             var selRes = ed.GetSelection(selOpts, filter);
             if (selRes.Status != PromptStatus.OK)
             {
+                Log.Info("No 3D solids selected. Exiting.");
                 ed.WriteMessage("\n未选择任何3D实体.");
                 return;
             }
@@ -71,8 +77,15 @@ namespace GStarCad.Net.Demo.Commands
                 tr.Commit();
             }
 
+            Log.Debug(string.Format("Selection: {0} entities, handles: [{1}], bbox min: {2}, max: {3}",
+                handles.Count,
+                string.Join(", ", handles),
+                minPt,
+                maxPt));
+
             if (minPt == null || maxPt == null)
             {
+                Log.Error("Bounding box computation failed — minPt or maxPt is null.");
                 ed.WriteMessage("\n无法计算实体包围盒.");
                 return;
             }
@@ -98,87 +111,162 @@ namespace GStarCad.Net.Demo.Commands
             var tempStep2D = Path.Combine(tempDir, baseName + "_2d.step");
             var outputPath = Path.Combine(tempDir, baseName + "_views.dwg");
 
+            Log.Debug(string.Format("Temp dir: {0}, files: 3D={1}, 2D={2}, DWG={3}",
+                tempDir, tempStep3D, tempStep2D, outputPath));
+
             dynamic comDoc = doc.AcadDocument;
 
             // Step 1: Export selected 3D solids to STEP
+            var stepSw = Stopwatch.StartNew();
             ed.WriteMessage("\n[1/3] 导出3D STEP...");
-            if (!ExportToStep(comDoc, handles, tempStep3D, ed))
+            Log.Debug("Step 1: Exporting 3D STEP...");
+            try
             {
-                ed.WriteMessage("\n3D STEP导出失败.");
-                return;
+                if (!ExportToStep(comDoc, handles, tempStep3D, ed))
+                {
+                    stepSw.Stop();
+                    Log.Error(string.Format("Step 1 failed after {0}ms", stepSw.ElapsedMilliseconds));
+                    ed.WriteMessage("\n3D STEP导出失败.");
+                    return;
+                }
+                stepSw.Stop();
+                Log.Debug(string.Format("Step 1 complete in {0}ms", stepSw.ElapsedMilliseconds));
+            }
+            catch (System.Exception ex)
+            {
+                stepSw.Stop();
+                Log.Error(string.Format("Step 1 failed after {0}ms", stepSw.ElapsedMilliseconds), ex);
+                throw;
             }
             ed.WriteMessage(" 完成.");
 
             // Step 2: Run OCCTTool for HLR projection
+            stepSw.Restart();
             ed.WriteMessage("\n[2/3] 运行HLC投影...");
-            var toolExitCode = RunOCCTTool(tempStep3D, tempStep2D, ed);
-            if (toolExitCode != 0)
+            Log.Debug("Step 2: Running OCCTTool...");
+            try
             {
-                ed.WriteMessage(string.Format("\nOCCTTool 返回错误码 {0}.", toolExitCode));
-                return;
-            }
+                var toolExitCode = RunOCCTTool(tempStep3D, tempStep2D, ed);
+                if (toolExitCode != 0)
+                {
+                    stepSw.Stop();
+                    Log.Error(string.Format("Step 2 failed: OCCTTool exit code {0} after {1}ms",
+                        toolExitCode, stepSw.ElapsedMilliseconds));
+                    ed.WriteMessage(string.Format("\nOCCTTool 返回错误码 {0}.", toolExitCode));
+                    return;
+                }
 
-            if (!File.Exists(tempStep2D))
+                if (!File.Exists(tempStep2D))
+                {
+                    stepSw.Stop();
+                    Log.Error(string.Format("Step 2 failed: OCCTTool produced no output after {0}ms",
+                        stepSw.ElapsedMilliseconds));
+                    ed.WriteMessage("\nOCCTTool 未生成输出文件.");
+                    return;
+                }
+                stepSw.Stop();
+                Log.Debug(string.Format("Step 2 complete in {0}ms", stepSw.ElapsedMilliseconds));
+            }
+            catch (System.Exception ex)
             {
-                ed.WriteMessage("\nOCCTTool 未生成输出文件.");
-                return;
+                stepSw.Stop();
+                Log.Error(string.Format("Step 2 failed after {0}ms", stepSw.ElapsedMilliseconds), ex);
+                throw;
             }
             ed.WriteMessage(" 完成.");
 
             // Step 3: Convert 2D STEP to DWG via COM
+            stepSw.Restart();
             ed.WriteMessage("\n[3/3] 转换STEP至DWG...");
-            if (!ConvertStepToDwg(tempStep2D, outputPath, ed))
+            Log.Debug("Step 3: Converting STEP to DWG...");
+            try
             {
-                ed.WriteMessage(string.Format(
-                    "\nSTEP→DWG转换失败. 2D STEP文件位于: {0}", tempStep2D));
-                return;
+                if (!ConvertStepToDwg(tempStep2D, outputPath, ed))
+                {
+                    stepSw.Stop();
+                    Log.Error(string.Format("Step 3 failed after {0}ms. 2D STEP at: {1}",
+                        stepSw.ElapsedMilliseconds, tempStep2D));
+                    ed.WriteMessage(string.Format(
+                        "\nSTEP→DWG转换失败. 2D STEP文件位于: {0}", tempStep2D));
+                    return;
+                }
+                stepSw.Stop();
+                Log.Debug(string.Format("Step 3 complete in {0}ms", stepSw.ElapsedMilliseconds));
+            }
+            catch (System.Exception ex)
+            {
+                stepSw.Stop();
+                Log.Error(string.Format("Step 3 failed after {0}ms", stepSw.ElapsedMilliseconds), ex);
+                throw;
             }
 
             // Cleanup temp files
             TryDeleteFile(tempStep3D);
             TryDeleteFile(tempStep2D);
 
+            sw.Stop();
+            Log.Info(string.Format("ViewsExport completed successfully in {0}ms, output: {1}",
+                sw.ElapsedMilliseconds, outputPath));
             ed.WriteMessage(string.Format(
                 "\n视图导出完成. 输出文件: {0}", outputPath));
         }
 
         private bool ExportToStep(dynamic comDoc, List<string> handles, string stepPath, Editor ed)
         {
+            Log.Debug(string.Format("ExportToStep: {0} handles => {1}", handles.Count, stepPath));
+
             const int maxRetries = 2;
             const int waitMs = 500;
 
             for (int attempt = 0; attempt < maxRetries; attempt++)
             {
+                Log.Debug(string.Format("ExportToStep attempt {0}/{1}", attempt + 1, maxRetries));
                 try
                 {
-                    // Build a COM SelectionSet with the entity handles
                     dynamic ss = null;
-                    try { ss = comDoc.SelectionSets.Item("OCCT_SS"); ss.Delete(); } catch { }
+                    try
+                    {
+                        ss = comDoc.SelectionSets.Item("OCCT_SS");
+                        ss.Delete();
+                        Log.Debug("Deleted existing OCCT_SS selection set.");
+                    }
+                    catch
+                    {
+                        Log.Debug("No existing OCCT_SS to delete.");
+                    }
 
+                    Log.Debug("Creating COM SelectionSet 'OCCT_SS'...");
                     ss = comDoc.SelectionSets.Add("OCCT_SS");
+                    Log.Debug(string.Format("SelectionSet created, adding {0} items via HandleToObject...", handles.Count));
                     var items = new object[handles.Count];
                     for (int i = 0; i < handles.Count; i++)
                     {
                         items[i] = comDoc.HandleToObject(handles[i]);
                     }
                     ss.AddItems(items);
+                    Log.Debug("Items added to SelectionSet.");
 
+                    Log.Debug(string.Format("Calling comDoc.Export to '{0}'...", stepPath));
                     comDoc.Export(stepPath, "STEP", ss);
+                    Log.Debug("comDoc.Export returned.");
 
                     ss.Delete();
 
                     if (File.Exists(stepPath))
+                    {
+                        Log.Debug("ExportToStep succeeded: STEP file exists.");
                         return true;
+                    }
+                    Log.Warn("ExportToStep: COM Export succeeded but no output file found.");
                 }
-                catch
+                catch (System.Exception ex)
                 {
-                    // Fallback: use command-line EXPORT with current selection
+                    Log.Warn(string.Format("ExportToStep attempt {0} COM Export threw: {1}", attempt + 1, ex.Message));
                     if (attempt == maxRetries - 1)
                     {
                         try
                         {
-                            // Re-select entities via a window crossing (bounding box approach)
-                            // Use SendCommand with EXPORT which reads current selection
+                            Log.Debug("Fallback: using SendCommand EXPORT...");
                             var cmd = string.Format(CultureInfo.InvariantCulture,
                                 "_-EXPORT {0} ", stepPath);
                             comDoc.SendCommand(cmd);
@@ -189,23 +277,32 @@ namespace GStarCad.Net.Demo.Commands
                             Thread.Sleep(waitMs);
 
                             if (File.Exists(stepPath))
+                            {
+                                Log.Debug("Fallback SendCommand EXPORT succeeded.");
                                 return true;
+                            }
+                            Log.Warn("Fallback SendCommand EXPORT failed: no output file.");
                         }
-                        catch (System.Exception ex)
+                        catch (System.Exception fallbackEx)
                         {
-                            ed.WriteMessage(string.Format("\nCOM Export失败: {0}", ex.Message));
+                            Log.Error("Fallback SendCommand EXPORT threw exception", fallbackEx);
+                            ed.WriteMessage(string.Format("\nCOM Export失败: {0}", fallbackEx.Message));
                         }
                     }
                 }
             }
 
+            Log.Error("ExportToStep failed: all attempts exhausted.");
             return File.Exists(stepPath);
         }
 
         private int RunOCCTTool(string inputStep, string outputStep, Editor ed)
         {
+            Log.Debug(string.Format("RunOCCTTool: input='{0}', output='{1}'", inputStep, outputStep));
+
             var pluginDir = Path.GetDirectoryName(
                 Assembly.GetExecutingAssembly().Location);
+            Log.Debug(string.Format("Plugin directory: {0}", pluginDir));
 
             // Walk up from bin/Debug/net48 or bin/Release/net48 to repo root
             var candidateDirs = new[]
@@ -219,19 +316,24 @@ namespace GStarCad.Net.Demo.Commands
             {
                 var fullPath = Path.GetFullPath(dir);
                 var exePath = Path.Combine(fullPath, "OCCTTool.exe");
+                Log.Debug(string.Format("Searching for OCCTTool at: {0}", fullPath));
                 if (File.Exists(exePath))
                 {
                     toolDir = fullPath;
+                    Log.Debug(string.Format("Found OCCTTool at: {0}", exePath));
                     break;
                 }
             }
 
             if (toolDir == null)
             {
+                Log.Error("OCCTTool.exe not found in any candidate directory.");
                 ed.WriteMessage("\n找不到 OCCTTool.exe. 已搜索:");
                 foreach (var dir in candidateDirs)
                 {
-                    ed.WriteMessage(string.Format("\n  {0}", Path.GetFullPath(dir)));
+                    var fullPath = Path.GetFullPath(dir);
+                    Log.Error(string.Format("  Searched: {0}", fullPath));
+                    ed.WriteMessage(string.Format("\n  {0}", fullPath));
                 }
                 return -1;
             }
@@ -248,30 +350,43 @@ namespace GStarCad.Net.Demo.Commands
                 WorkingDirectory = toolDir,
             };
 
+            Log.Debug(string.Format("Starting OCCTTool: {0} {1}", exe, psi.Arguments));
+
             try
             {
                 using (var proc = Process.Start(psi))
                 {
                     if (proc == null)
                     {
+                        Log.Error("Process.Start returned null for OCCTTool.");
                         ed.WriteMessage("\n无法启动 OCCTTool.exe.");
                         return -2;
                     }
+
+                    Log.Debug(string.Format("OCCTTool process started, PID={0}", proc.Id));
 
                     var stdout = proc.StandardOutput.ReadToEnd();
                     var stderr = proc.StandardError.ReadToEnd();
 
                     if (!proc.WaitForExit(ToolTimeoutMs))
                     {
+                        Log.Error(string.Format("OCCTTool timed out after {0}ms.", ToolTimeoutMs));
                         ed.WriteMessage("\nOCCTTool 超时.");
                         try { proc.Kill(); } catch { }
                         return -3;
                     }
 
+                    Log.Debug(string.Format("OCCTTool exited with code {0}", proc.ExitCode));
+
+                    if (!string.IsNullOrEmpty(stdout))
+                    {
+                        Log.Debug(string.Format("OCCTTool stdout: {0}", stdout.Trim()));
+                    }
                     if (proc.ExitCode != 0)
                     {
                         if (!string.IsNullOrEmpty(stderr))
                         {
+                            Log.Error(string.Format("OCCTTool stderr: {0}", stderr.Trim()));
                             ed.WriteMessage(string.Format("\nOCCTTool 错误: {0}", stderr.Trim()));
                         }
                     }
@@ -281,6 +396,7 @@ namespace GStarCad.Net.Demo.Commands
             }
             catch (System.Exception ex)
             {
+                Log.Error("Exception starting OCCTTool process.", ex);
                 ed.WriteMessage(string.Format("\n启动 OCCTTool 异常: {0}", ex.Message));
                 return -4;
             }
@@ -288,17 +404,22 @@ namespace GStarCad.Net.Demo.Commands
 
         private bool ConvertStepToDwg(string stepPath, string dwgPath, Editor ed)
         {
+            Log.Debug(string.Format("ConvertStepToDwg: STEP='{0}', DWG='{1}'", stepPath, dwgPath));
+
             try
             {
                 // Launch an isolated GStarCAD process with a script file to avoid
                 // COM re-entrancy and document switching during active command execution.
                 var gcadExe = Process.GetCurrentProcess().MainModule.FileName;
+                Log.Debug(string.Format("GStarCAD executable: {0}", gcadExe));
+
                 var scriptDir = Path.GetDirectoryName(dwgPath);
                 var scriptPath = Path.Combine(scriptDir, "_gcad_convert.scr");
 
                 var script = string.Format(CultureInfo.InvariantCulture,
                     "FILEDIA 0\n_.OPEN \"{0}\"\n_.SAVEAS 2018 \"{1}\"\n_.QUIT Y\n",
                     stepPath, dwgPath);
+                Log.Debug(string.Format("Writing script to {0}: {1}", scriptPath, script.Replace("\n", "\\n")));
                 File.WriteAllText(scriptPath, script);
 
                 var psi = new ProcessStartInfo
@@ -309,30 +430,48 @@ namespace GStarCad.Net.Demo.Commands
                     WindowStyle = ProcessWindowStyle.Minimized,
                 };
 
+                Log.Debug(string.Format("Starting GStarCAD: {0} /b \"{1}\"", gcadExe, scriptPath));
+
                 using (var proc = Process.Start(psi))
                 {
                     if (proc == null)
                     {
+                        Log.Error("Process.Start returned null for GStarCAD conversion process.");
                         ed.WriteMessage("\n无法启动GStarCAD进程进行转换.");
                         TryDeleteFile(scriptPath);
                         return false;
                     }
 
+                    Log.Debug(string.Format("GStarCAD conversion process started, PID={0}, waiting up to 60000ms...", proc.Id));
+
                     if (!proc.WaitForExit(60000))
                     {
+                        Log.Error("GStarCAD conversion process timed out after 60000ms.");
                         ed.WriteMessage("\nGStarCAD转换进程超时.");
                         try { proc.Kill(); } catch { }
                         TryDeleteFile(scriptPath);
                         return false;
                     }
+
+                    Log.Debug(string.Format("GStarCAD conversion process exited with code {0}", proc.ExitCode));
                 }
 
                 TryDeleteFile(scriptPath);
 
-                return File.Exists(dwgPath);
+                var result = File.Exists(dwgPath);
+                if (result)
+                {
+                    Log.Debug(string.Format("ConvertStepToDwg succeeded: {0}", dwgPath));
+                }
+                else
+                {
+                    Log.Error(string.Format("ConvertStepToDwg: GStarCAD exited but no DWG output at {0}", dwgPath));
+                }
+                return result;
             }
             catch (System.Exception ex)
             {
+                Log.Error("ConvertStepToDwg failed with exception.", ex);
                 ed.WriteMessage(string.Format("\nSTEP→DWG转换失败: {0}", ex.Message));
                 return false;
             }
