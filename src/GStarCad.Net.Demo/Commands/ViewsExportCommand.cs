@@ -212,11 +212,9 @@ namespace GStarCad.Net.Demo.Commands
 
         private bool ExportToStep(dynamic comDoc, string stepPath, Point3d minPt, Point3d maxPt, Editor ed)
         {
-            Log.Debug(string.Format("ExportToStep (acSelectionSetAll): path={0}", stepPath));
+            Log.Debug(string.Format("ExportToStep: path={0}", stepPath));
 
             const int acSelectionSetAll = 4;
-            var filterType = new short[] { 0 };
-            var filterData = new object[] { "3DSOLID" };
 
             for (int attempt = 0; attempt < 3; attempt++)
             {
@@ -234,14 +232,34 @@ namespace GStarCad.Net.Demo.Commands
                     ss = comDoc.SelectionSets.Add("OCCT_ALL");
                     Log.Debug("Created COM SelectionSet 'OCCT_ALL'.");
 
-                    ss.Select(acSelectionSetAll, null, null, filterType, filterData);
-                    Log.Debug(string.Format("SelectionSet.All(3DSOLID): Count={0}", ss.Count));
+                    // Try progressive selection strategies based on attempt
+                    if (attempt == 0)
+                    {
+                        // Strategy A: bare Select(acSelectionSetAll) — no filter at all
+                        ss.Select(acSelectionSetAll, null, null, null, null);
+                        Log.Debug(string.Format("Select(4,null,null,null,null): Count={0}", ss.Count));
+                    }
+                    else if (attempt == 1)
+                    {
+                        // Strategy B: Select(acSelectionSetAll) without filter params
+                        ss.Select(acSelectionSetAll);
+                        Log.Debug(string.Format("Select(4): Count={0}", ss.Count));
+                    }
+                    else
+                    {
+                        // Strategy C: filter with int[] (Int32) instead of short[] (Int16)
+                        var filterType = new int[] { 0 };
+                        var filterData = new object[] { "3DSOLID" };
+                        ss.Select(acSelectionSetAll, null, null, filterType, filterData);
+                        Log.Debug(string.Format("Select(4,null,null,int[],object[]): Count={0}", ss.Count));
+                    }
 
                     if (ss.Count == 0)
                     {
-                        ed.WriteMessage("\n当前文档中未找到3DSOLID实体.");
-                        Log.Warn("acSelectionSetAll returned 0 entities.");
+                        Log.Warn(string.Format("Strategy {0}: 0 entities selected.", (char)('A' + attempt)));
                         ss.Delete();
+                        if (attempt < 2) continue;
+                        ed.WriteMessage("\n所有选择策略均未找到实体. COM SelectionSet.Select 可能不兼容.");
                         return false;
                     }
 
