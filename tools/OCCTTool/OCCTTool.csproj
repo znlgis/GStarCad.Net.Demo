@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net48</TargetFramework>
+    <PlatformTarget>x64</PlatformTarget>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="OCCTProxy">
+      <HintPath>D:\self\code\OCCT-samples-csharp\win64\vc14\bind\OCCTProxy.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+</Project>

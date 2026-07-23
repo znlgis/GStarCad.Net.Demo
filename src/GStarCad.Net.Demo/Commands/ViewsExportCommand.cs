@@ -4,15 +4,19 @@ using GrxCAD.EditorInput;
 using GrxCAD.Geometry;
 using GrxCAD.Runtime;
 using System;
+using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Threading;
 
 namespace GStarCad.Net.Demo.Commands
 {
     public class ViewsExportCommand
     {
-        private const double ViewScaleFactor = 1.5;
+        private const int ToolTimeoutMs = 120000;
 
         [CommandMethod("VIEWEXPORT")]
         public void ViewsExport()
@@ -34,6 +38,8 @@ namespace GStarCad.Net.Demo.Commands
                 return;
             }
 
+            // Collect entity handles for COM export and compute bounding box
+            var handles = new List<string>();
             Point3d? minPt = null;
             Point3d? maxPt = null;
 
@@ -42,6 +48,8 @@ namespace GStarCad.Net.Demo.Commands
                 foreach (SelectedObject selObj in selRes.Value)
                 {
                     var ent = (Entity)tr.GetObject(selObj.ObjectId, OpenMode.ForRead);
+                    handles.Add(ent.Handle.ToString());
+
                     var ext = ent.GeometricExtents;
 
                     if (minPt == null)
@@ -70,26 +78,9 @@ namespace GStarCad.Net.Demo.Commands
                 return;
             }
 
-            var sizeX = maxPt.Value.X - minPt.Value.X;
-            var sizeY = maxPt.Value.Y - minPt.Value.Y;
-            var gridOffset = Math.Max(sizeX, sizeY) * ViewScaleFactor;
-
-            var center = new Point3d(
-                (minPt.Value.X + maxPt.Value.X) / 2.0,
-                (minPt.Value.Y + maxPt.Value.Y) / 2.0,
-                (minPt.Value.Z + maxPt.Value.Z) / 2.0);
-
-            // View direction + insertion point (2x2 grid layout)
-            var viewLayouts = new[]
-            {
-                new { Name = "前视图", Dir = new Vector3d(0,  1, 0), InsX = 0.0, InsY = 0.0 },
-                new { Name = "后视图", Dir = new Vector3d(0, -1, 0), InsX = gridOffset, InsY = 0.0 },
-                new { Name = "左视图", Dir = new Vector3d(1,  0, 0), InsX = 0.0, InsY = gridOffset },
-                new { Name = "右视图", Dir = new Vector3d(-1, 0, 0), InsX = gridOffset, InsY = gridOffset },
-            };
-
+            // Prepare temp directory and file paths
             var assemblyDir = Path.GetDirectoryName(
-                System.Reflection.Assembly.GetExecutingAssembly().Location);
+                Assembly.GetExecutingAssembly().Location);
             var tempDir = Path.Combine(assemblyDir, "temp");
             if (!Directory.Exists(tempDir))
             {
@@ -102,80 +93,234 @@ namespace GStarCad.Net.Demo.Commands
                 originalName = "untitled";
             }
             var timestamp = DateTime.Now.ToString("yyyyMMddHHmmss");
-            var outputPath = Path.Combine(tempDir,
-                string.Format("{0}_{1}_views.dwg", originalName, timestamp));
+            var baseName = string.Format("{0}_{1}", originalName, timestamp);
+
+            var tempStep3D = Path.Combine(tempDir, baseName + "_3d.step");
+            var tempStep2D = Path.Combine(tempDir, baseName + "_2d.step");
+            var outputPath = Path.Combine(tempDir, baseName + "_views.dwg");
 
             dynamic comDoc = doc.AcadDocument;
-            int successCount = 0;
 
-            foreach (var vl in viewLayouts)
+            // Step 1: Export selected 3D solids to STEP
+            ed.WriteMessage("\n[1/3] 导出3D STEP...");
+            if (!ExportToStep(comDoc, handles, tempStep3D, ed))
             {
-                try
-                {
-                    Generate2DViewSync(comDoc, center, vl.Dir, minPt.Value, maxPt.Value,
-                        vl.InsX, vl.InsY);
-                    ed.WriteMessage(string.Format("\n{0} — 生成成功.", vl.Name));
-                    successCount++;
-                }
-                catch (System.Exception ex)
-                {
-                    ed.WriteMessage(string.Format(
-                        "\n{0} — 失败: {1}", vl.Name, ex.Message));
-                }
+                ed.WriteMessage("\n3D STEP导出失败.");
+                return;
             }
+            ed.WriteMessage(" 完成.");
 
-            if (successCount == 0)
+            // Step 2: Run OCCTTool for HLR projection
+            ed.WriteMessage("\n[2/3] 运行HLC投影...");
+            var toolExitCode = RunOCCTTool(tempStep3D, tempStep2D, ed);
+            if (toolExitCode != 0)
             {
-                ed.WriteMessage("\n所有视图生成失败, 未输出文件.");
+                ed.WriteMessage(string.Format("\nOCCTTool 返回错误码 {0}.", toolExitCode));
                 return;
             }
 
-            // Save current document (contains 3D solids + 2D blocks) as output
-            db.SaveAs(outputPath, DwgVersion.Current);
+            if (!File.Exists(tempStep2D))
+            {
+                ed.WriteMessage("\nOCCTTool 未生成输出文件.");
+                return;
+            }
+            ed.WriteMessage(" 完成.");
+
+            // Step 3: Convert 2D STEP to DWG via COM
+            ed.WriteMessage("\n[3/3] 转换STEP至DWG...");
+            if (!ConvertStepToDwg(tempStep2D, outputPath, ed))
+            {
+                ed.WriteMessage(string.Format(
+                    "\nSTEP→DWG转换失败. 2D STEP文件位于: {0}", tempStep2D));
+                return;
+            }
+
+            // Cleanup temp files
+            TryDeleteFile(tempStep3D);
+            TryDeleteFile(tempStep2D);
 
             ed.WriteMessage(string.Format(
-                "\n视图导出完成 ({0}/4). 输出文件: {1}", successCount, outputPath));
+                "\n视图导出完成. 输出文件: {0}", outputPath));
         }
 
-        private void Generate2DViewSync(dynamic comDoc, Point3d center, Vector3d viewDir,
-            Point3d minPt, Point3d maxPt, double insX, double insY)
+        private bool ExportToStep(dynamic comDoc, List<string> handles, string stepPath, Editor ed)
         {
-            var normal = viewDir.GetNormal();
-            Vector3d uRef = Math.Abs(normal.X) < 0.9 ? Vector3d.XAxis : Vector3d.ZAxis;
-            Vector3d u = normal.CrossProduct(uRef).GetNormal();
-            var halfSize = center.DistanceTo(maxPt) * ViewScaleFactor * 3;
+            const int maxRetries = 2;
+            const int waitMs = 500;
 
-            // 3-point SECTIONPLANE: p1,p2 define plane extent, p3 defines "front" viewing side.
-            var p1 = center + u * halfSize;
-            var p2 = center - u * halfSize;
-            var p3 = center + normal * halfSize;
-
-            var cmdPlane = string.Format(CultureInfo.InvariantCulture,
-                "SECTIONPLANE {0:F6},{1:F6},{2:F6} {3:F6},{4:F6},{5:F6} {6:F6},{7:F6},{8:F6} ",
-                p1.X, p1.Y, p1.Z,
-                p2.X, p2.Y, p2.Z,
-                p3.X, p3.Y, p3.Z);
-            comDoc.SendCommand(cmdPlane);
-            Thread.Sleep(500);
-            comDoc.SendCommand("REGEN ");
-            Thread.Sleep(300);
-
-            // Use COM to get the section plane handle, then select by handle.
-            var sectionHandle = GetLastEntityHandle(comDoc);
-            var cmdBlock = string.Format(CultureInfo.InvariantCulture,
-                "SECTIONPLANETOBLOCK (handent \"{0}\") {1:F6},{2:F6},0 1 1 0 ",
-                sectionHandle, insX, insY);
-            comDoc.SendCommand(cmdBlock);
-        }
-        private string GetLastEntityHandle(dynamic comDoc)
-        {
-            var ms = comDoc.ModelSpace;
-            int count = ms.Count;
-            if (count == 0)
+            for (int attempt = 0; attempt < maxRetries; attempt++)
             {
-                throw new InvalidOperationException("No entities in model space.");
+                try
+                {
+                    // Build a COM SelectionSet with the entity handles
+                    dynamic ss = null;
+                    try { ss = comDoc.SelectionSets.Item("OCCT_SS"); ss.Delete(); } catch { }
+
+                    ss = comDoc.SelectionSets.Add("OCCT_SS");
+                    var items = new object[handles.Count];
+                    for (int i = 0; i < handles.Count; i++)
+                    {
+                        items[i] = comDoc.HandleToObject(handles[i]);
+                    }
+                    ss.AddItems(items);
+
+                    comDoc.Export(stepPath, "STEP", ss);
+
+                    ss.Delete();
+
+                    if (File.Exists(stepPath))
+                        return true;
+                }
+                catch
+                {
+                    // Fallback: use command-line EXPORT with current selection
+                    if (attempt == maxRetries - 1)
+                    {
+                        try
+                        {
+                            // Re-select entities via a window crossing (bounding box approach)
+                            // Use SendCommand with EXPORT which reads current selection
+                            var cmd = string.Format(CultureInfo.InvariantCulture,
+                                "_-EXPORT {0} ", stepPath);
+                            comDoc.SendCommand(cmd);
+                            Thread.Sleep(waitMs * 2);
+                            comDoc.SendCommand(" ");
+                            Thread.Sleep(waitMs * 2);
+                            comDoc.SendCommand(" ");
+                            Thread.Sleep(waitMs);
+
+                            if (File.Exists(stepPath))
+                                return true;
+                        }
+                        catch (System.Exception ex)
+                        {
+                            ed.WriteMessage(string.Format("\nCOM Export失败: {0}", ex.Message));
+                        }
+                    }
+                }
             }
-            return (string)ms.Item(count - 1).Handle;
+
+            return File.Exists(stepPath);
+        }
+
+        private int RunOCCTTool(string inputStep, string outputStep, Editor ed)
+        {
+            var pluginDir = Path.GetDirectoryName(
+                Assembly.GetExecutingAssembly().Location);
+
+            // Walk up from bin/Debug/net48 or bin/Release/net48 to repo root
+            var candidateDirs = new[]
+            {
+                Path.Combine(pluginDir, @"..\..\..\..\tools\OCCTTool\bin\Release\net48"),
+                Path.Combine(pluginDir, @"..\..\..\..\tools\OCCTTool\bin\Debug\net48"),
+            };
+
+            string toolDir = null;
+            foreach (var dir in candidateDirs)
+            {
+                var fullPath = Path.GetFullPath(dir);
+                var exePath = Path.Combine(fullPath, "OCCTTool.exe");
+                if (File.Exists(exePath))
+                {
+                    toolDir = fullPath;
+                    break;
+                }
+            }
+
+            if (toolDir == null)
+            {
+                ed.WriteMessage("\n找不到 OCCTTool.exe. 已搜索:");
+                foreach (var dir in candidateDirs)
+                {
+                    ed.WriteMessage(string.Format("\n  {0}", Path.GetFullPath(dir)));
+                }
+                return -1;
+            }
+
+            var exe = Path.Combine(toolDir, "OCCTTool.exe");
+            var psi = new ProcessStartInfo
+            {
+                FileName = exe,
+                Arguments = string.Format("\"{0}\" \"{1}\"", inputStep, outputStep),
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                WorkingDirectory = toolDir,
+            };
+
+            try
+            {
+                using (var proc = Process.Start(psi))
+                {
+                    if (proc == null)
+                    {
+                        ed.WriteMessage("\n无法启动 OCCTTool.exe.");
+                        return -2;
+                    }
+
+                    var stdout = proc.StandardOutput.ReadToEnd();
+                    var stderr = proc.StandardError.ReadToEnd();
+
+                    if (!proc.WaitForExit(ToolTimeoutMs))
+                    {
+                        ed.WriteMessage("\nOCCTTool 超时.");
+                        try { proc.Kill(); } catch { }
+                        return -3;
+                    }
+
+                    if (proc.ExitCode != 0)
+                    {
+                        if (!string.IsNullOrEmpty(stderr))
+                        {
+                            ed.WriteMessage(string.Format("\nOCCTTool 错误: {0}", stderr.Trim()));
+                        }
+                    }
+
+                    return proc.ExitCode;
+                }
+            }
+            catch (System.Exception ex)
+            {
+                ed.WriteMessage(string.Format("\n启动 OCCTTool 异常: {0}", ex.Message));
+                return -4;
+            }
+        }
+
+        private bool ConvertStepToDwg(string stepPath, string dwgPath, Editor ed)
+        {
+            try
+            {
+                dynamic comApp = Marshal.GetActiveObject("Gcad.Application");
+                dynamic newDoc = comApp.Documents.Open(stepPath);
+                Thread.Sleep(1000);
+
+                newDoc.SaveAs(dwgPath);
+                Thread.Sleep(500);
+
+                newDoc.Close();
+                Thread.Sleep(300);
+
+                return File.Exists(dwgPath);
+            }
+            catch (System.Exception ex)
+            {
+                ed.WriteMessage(string.Format("\nSTEP→DWG转换失败: {0}", ex.Message));
+                return false;
+            }
+        }
+
+        private void TryDeleteFile(string path)
+        {
+            try
+            {
+                if (File.Exists(path))
+                    File.Delete(path);
+            }
+            catch
+            {
+                // temp file cleanup is best-effort
+            }
         }
     }
 }
