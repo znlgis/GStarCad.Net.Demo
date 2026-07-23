@@ -87,13 +87,18 @@ namespace GStarCad.Net.Demo.Commands
             var projections = OrthoProjector.Project(triangles);
 
             var totalEdges = 0;
+            var visibleEdges = 0;
             foreach (var p in projections)
-                totalEdges += p.Edges.Count;
+                foreach (var e in p.Edges)
+                {
+                    totalEdges++;
+                    if (e.IsVisible) visibleEdges++;
+                }
 
             ed.WriteMessage(" 完成.");
 
             // Step 3: Arrange + Save DWG
-            ed.WriteMessage("\n[3/3] 生成DWG...");
+            ed.WriteMessage("\n[3/3] 生成三视图DWG...");
 
             try
             {
@@ -113,23 +118,48 @@ namespace GStarCad.Net.Demo.Commands
             ed.WriteMessage(" 完成.");
             ed.WriteMessage(string.Format("\n\n=== MESHVIEWEXPORT 完成 ({0}ms) ===", sw.ElapsedMilliseconds));
             ed.WriteMessage(string.Format("\n输出文件: {0}", dwgPath));
-            ed.WriteMessage(string.Format("\n三角面数: {0}, 总边数: {1}", triangles.Count, totalEdges));
+            ed.WriteMessage(string.Format("\n视图: 主/俯/左 (第一角). 三角面数: {0}, 可见边: {1}, 隐藏边: {2}",
+                triangles.Count, visibleEdges, totalEdges - visibleEdges));
         }
 
         private static bool ExportStl(Document doc, string stlPath)
         {
-            doc.SendStringToExecute(
-                string.Format("_.FILEDIA 0 _.EXPORT {0} _.FILEDIA 1 ", stlPath.Replace('\\', '/')),
-                false, false, false);
-
-            var deadline = DateTime.Now.AddSeconds(60);
-            while (DateTime.Now < deadline)
+            // Raise surface tessellation quality so curved faces (cylinders, fillets) export with
+            // finer, smoother facets; the original value is restored afterwards.
+            object savedFacetres = null;
+            try
             {
-                System.Windows.Forms.Application.DoEvents();
-                if (File.Exists(stlPath) && new FileInfo(stlPath).Length >= 100)
-                    return true;
+                savedFacetres = Application.GetSystemVariable("FACETRES");
+                Application.SetSystemVariable("FACETRES", 10.0);
             }
-            return false;
+            catch
+            {
+                /* FACETRES may be unavailable; proceed with defaults. */
+            }
+
+            try
+            {
+                doc.SendStringToExecute(
+                    string.Format("_.FILEDIA 0 _.EXPORT {0} _.FILEDIA 1 ", stlPath.Replace('\\', '/')),
+                    false, false, false);
+
+                var deadline = DateTime.Now.AddSeconds(60);
+                while (DateTime.Now < deadline)
+                {
+                    System.Windows.Forms.Application.DoEvents();
+                    if (File.Exists(stlPath) && new FileInfo(stlPath).Length >= 100)
+                        return true;
+                }
+                return false;
+            }
+            finally
+            {
+                if (savedFacetres != null)
+                {
+                    try { Application.SetSystemVariable("FACETRES", savedFacetres); }
+                    catch { /* best-effort restore */ }
+                }
+            }
         }
 
         private static void TryDeleteFile(string path)
