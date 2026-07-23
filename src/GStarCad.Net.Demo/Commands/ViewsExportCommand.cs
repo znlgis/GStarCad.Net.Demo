@@ -6,6 +6,7 @@ using GrxCAD.Runtime;
 using System;
 using System.Globalization;
 using System.IO;
+using System.Threading;
 
 namespace GStarCad.Net.Demo.Commands
 {
@@ -153,6 +154,11 @@ namespace GStarCad.Net.Demo.Commands
                 fromPt.X, fromPt.Y, fromPt.Z,
                 toPt.X, toPt.Y, toPt.Z);
             comDoc.SendCommand(cmdPlane);
+
+            // COM SendCommand is async — wait for SECTIONPLANE + REGEN to commit.
+            Thread.Sleep(500);
+            comDoc.SendCommand("REGEN ");
+            Thread.Sleep(300);
 
             // GStarCAD SECTIONPLANETOBLOCK: _L selects last entity (section plane).
             // No _N option; directly provides insertion point, scale X/Y, rotation.
