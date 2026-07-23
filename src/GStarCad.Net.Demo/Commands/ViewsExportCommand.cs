@@ -113,21 +113,42 @@ namespace GStarCad.Net.Demo.Commands
             Log.Debug(string.Format("Temp dir: {0}, files: 3D={1}, 2D={2}, DWG={3}",
                 tempDir, tempStep3D, tempStep2D, outputPath));
 
-            // Step 1: Export selected 3D solids as IGES via synchronous Editor.Command()
+            // Step 1: Export selected 3D solids, convert to STEP if needed
             var stepSw = Stopwatch.StartNew();
-            ed.WriteMessage("\n[1/3] 导出3D IGES...");
-            Log.Debug("Step 1: Exporting 3D IGES via Editor.Command...");
+            ed.WriteMessage("\n[1/3] 导出3D几何...");
+            Log.Debug("Step 1: Exporting 3D geometry...");
+            string tempStep3D_actual = tempStep3D;
             try
             {
                 if (!ExportIges(ed, objIds, tempStep3D))
                 {
                     stepSw.Stop();
-                    Log.Error(string.Format("Step 1 failed after {0}ms", stepSw.ElapsedMilliseconds));
-                    ed.WriteMessage("\n3D STEP导出失败.");
+                    Log.Error(string.Format("Step 1 export failed after {0}ms", stepSw.ElapsedMilliseconds));
+                    ed.WriteMessage("\n3D导出失败.");
                     return;
                 }
+
+                // If ACISOUT produced SAT format, convert SAT → STEP for OCCTTool
+                if (tempStep3D.EndsWith(".igs"))
+                {
+                    var stepPath = Path.ChangeExtension(tempStep3D, ".stp");
+                    ed.WriteMessage("\n  转换 SAT → STEP...");
+                    Log.Debug(string.Format("Converting SAT->STEP: {0} -> {1}", tempStep3D, stepPath));
+                    if (!ConvertToStep(tempStep3D, stepPath, ed))
+                    {
+                        Log.Warn("SAT→STEP conversion failed, trying raw export as input.");
+                        // Fallback: try using the raw export file directly with OCCTTool
+                    }
+                    else
+                    {
+                        TryDeleteFile(tempStep3D);
+                        tempStep3D_actual = stepPath;
+                        Log.Debug("SAT→STEP conversion succeeded.");
+                    }
+                }
+
                 stepSw.Stop();
-                Log.Debug(string.Format("Step 1 complete in {0}ms", stepSw.ElapsedMilliseconds));
+                Log.Debug(string.Format("Step 1 complete in {0}ms, input: {1}", stepSw.ElapsedMilliseconds, tempStep3D_actual));
             }
             catch (System.Exception ex)
             {
@@ -143,7 +164,7 @@ namespace GStarCad.Net.Demo.Commands
             Log.Debug("Step 2: Running OCCTTool...");
             try
             {
-                var toolExitCode = RunOCCTTool(tempStep3D, tempStep2D, ed);
+                var toolExitCode = RunOCCTTool(tempStep3D_actual, tempStep2D, ed);
                 if (toolExitCode != 0)
                 {
                     stepSw.Stop();
@@ -175,8 +196,8 @@ namespace GStarCad.Net.Demo.Commands
             // Step 3: Output 2D IGES (skip DWG conversion to avoid second GStarCAD instance)
             Log.Debug("Pipeline complete, output: " + tempStep2D);
 
-            // Cleanup temp 3D IGES (no longer needed)
-            TryDeleteFile(tempStep3D);
+            // Cleanup temp 3D file (no longer needed)
+            TryDeleteFile(tempStep3D_actual);
 
             sw.Stop();
             Log.Info(string.Format(CultureInfo.InvariantCulture,
@@ -337,6 +358,68 @@ namespace GStarCad.Net.Demo.Commands
                 Log.Error("Exception starting OCCTTool process.", ex);
                 ed.WriteMessage(string.Format("\n启动 OCCTTool 异常: {0}", ex.Message));
                 return -4;
+            }
+        }
+
+        private bool ConvertToStep(string inputPath, string outputPath, Editor ed)
+        {
+            Log.Debug(string.Format("ConvertToStep: input='{0}', output='{1}'", inputPath, outputPath));
+
+            try
+            {
+                var gcadExe = Process.GetCurrentProcess().MainModule.FileName;
+                var scriptDir = Path.GetDirectoryName(outputPath);
+                var scriptPath = Path.Combine(scriptDir, "_gcad_convert.scr");
+
+                var script = string.Format(CultureInfo.InvariantCulture,
+                    "FILEDIA 0\n_.OPEN \"{0}\"\n_.SAVEAS 2018 \"{1}\"\n_.QUIT Y\n",
+                    inputPath.Replace('\\', '/'), outputPath.Replace('\\', '/'));
+
+                Log.Debug(string.Format("ConvertToStep script: {0}", script.Replace("\n", "\\n")));
+                File.WriteAllText(scriptPath, script);
+
+                var psi = new ProcessStartInfo
+                {
+                    FileName = gcadExe,
+                    Arguments = string.Format("/b \"{0}\"", scriptPath),
+                    UseShellExecute = true,
+                    WindowStyle = ProcessWindowStyle.Minimized,
+                };
+
+                Log.Debug(string.Format("Starting GStarCAD conversion: {0} /b \"{1}\"", gcadExe, scriptPath));
+
+                using (var proc = Process.Start(psi))
+                {
+                    if (proc == null)
+                    {
+                        Log.Error("ConvertToStep: Process.Start returned null.");
+                        ed.WriteMessage("\n无法启动GStarCAD进行格式转换.");
+                        TryDeleteFile(scriptPath);
+                        return false;
+                    }
+
+                    if (!proc.WaitForExit(60000))
+                    {
+                        Log.Error("ConvertToStep: GStarCAD timed out.");
+                        ed.WriteMessage("\nGStarCAD转换超时.");
+                        try { proc.Kill(); } catch { }
+                        TryDeleteFile(scriptPath);
+                        return false;
+                    }
+
+                    Log.Debug(string.Format("ConvertToStep: GStarCAD exited with code {0}", proc.ExitCode));
+                }
+
+                TryDeleteFile(scriptPath);
+
+                var result = File.Exists(outputPath);
+                Log.Debug(string.Format("ConvertToStep: result={0}, output='{1}'", result, outputPath));
+                return result;
+            }
+            catch (System.Exception ex)
+            {
+                Log.Error("ConvertToStep failed with exception.", ex);
+                return false;
             }
         }
 
