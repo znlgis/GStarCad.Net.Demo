@@ -154,18 +154,27 @@ namespace GStarCad.Net.Demo.Commands
                 fromPt.X, fromPt.Y, fromPt.Z,
                 toPt.X, toPt.Y, toPt.Z);
             comDoc.SendCommand(cmdPlane);
-
-            // COM SendCommand is async — wait for SECTIONPLANE + REGEN to commit.
             Thread.Sleep(500);
             comDoc.SendCommand("REGEN ");
             Thread.Sleep(300);
 
-            // GStarCAD SECTIONPLANETOBLOCK: _L selects last entity (section plane).
-            // No _N option; directly provides insertion point, scale X/Y, rotation.
+            // Use COM to get the section plane handle, then select by handle.
+            // _L is unreliable due to COM SendCommand async ordering.
+            var sectionHandle = GetLastEntityHandle(comDoc);
             var cmdBlock = string.Format(CultureInfo.InvariantCulture,
-                "SECTIONPLANETOBLOCK _L {0:F6},{1:F6},0 1 1 0 ",
-                insX, insY);
+                "SECTIONPLANETOBLOCK (handent \"{0}\") {1:F6},{2:F6},0 1 1 0 ",
+                sectionHandle, insX, insY);
             comDoc.SendCommand(cmdBlock);
+        }
+        private string GetLastEntityHandle(dynamic comDoc)
+        {
+            var ms = comDoc.ModelSpace;
+            int count = ms.Count;
+            if (count == 0)
+            {
+                throw new InvalidOperationException("No entities in model space.");
+            }
+            return (string)ms.Item(count - 1).Handle;
         }
     }
 }
