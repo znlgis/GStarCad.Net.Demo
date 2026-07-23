@@ -6,16 +6,12 @@ using GrxCAD.Runtime;
 using System;
 using System.Globalization;
 using System.IO;
-using System.Reflection;
 
 namespace GStarCad.Net.Demo.Commands
 {
     public class ViewsExportCommand
     {
         private const double ViewScaleFactor = 1.5;
-        private const int GcSectionType2dSection = 2;
-        private const int GcSectionGenerationSourceSelected = 2;
-        private const int GcSectionGenerationDestinationBlock = 16;
 
         [CommandMethod("VIEWEXPORT")]
         public void ViewsExport()
@@ -86,13 +82,11 @@ namespace GStarCad.Net.Demo.Commands
                 new { Name = "右视图", Dir = new Vector3d(-1, 0, 0) },
             };
 
-            dynamic comDoc = doc.AcadDocument;
-
             foreach (var view in views)
             {
                 try
                 {
-                    Generate2DView(comDoc, center, view.Dir, minPt.Value, maxPt.Value);
+                    Generate2DProjection(doc, center, view.Dir, minPt.Value, maxPt.Value);
                     ed.WriteMessage(string.Format("\n{0} — 生成成功.", view.Name));
                 }
                 catch (System.Exception ex)
@@ -123,79 +117,10 @@ namespace GStarCad.Net.Demo.Commands
             ed.WriteMessage(string.Format("\n视图导出完成. 输出文件: {0}", outputPath));
         }
 
-        private void Generate2DView(dynamic comDoc, Point3d center, Vector3d viewDir,
+        private void Generate2DProjection(Document doc, Point3d center, Vector3d viewDir,
             Point3d minPt, Point3d maxPt)
         {
             var normal = viewDir.GetNormal();
-            Vector3d uRef = Math.Abs(normal.X) < 0.9 ? Vector3d.XAxis : Vector3d.ZAxis;
-            Vector3d u = normal.CrossProduct(uRef).GetNormal();
-            var halfSize = center.DistanceTo(maxPt) * ViewScaleFactor;
-
-            var fromPt = center + u * halfSize;
-            var toPt = center - u * halfSize;
-            var viewSide = center + normal * halfSize;
-
-            double[] fromArr = { fromPt.X, fromPt.Y, fromPt.Z };
-            double[] toArr = { toPt.X, toPt.Y, toPt.Z };
-            double[] viewArr = { viewSide.X, viewSide.Y, viewSide.Z };
-
-            dynamic section = comDoc.ModelSpace.AddSection(fromArr, toArr, viewArr);
-            if (section == null)
-            {
-                throw new InvalidOperationException("COM AddSection returned null.");
-            }
-
-            try
-            {
-                section.Enabled = true;
-            }
-            catch
-            {
-                // COM Enabled property may not be supported in all versions.
-            }
-
-            // Set section type to 2D Section (critical for GenerateSectionGeometry)
-            dynamic settings = section.Settings;
-            settings.CurrentSectionType = GcSectionType2dSection;
-
-            dynamic typeSettings = settings.GetSectionTypeSettings(GcSectionType2dSection);
-            int genOpts = GcSectionGenerationSourceSelected | GcSectionGenerationDestinationBlock;
-            typeSettings.GenerationOptions = genOpts;
-
-            object sectionObj = (object)section;
-            Type sectionType = sectionObj.GetType();
-
-            object[] args = new object[6];
-            args[0] = sectionObj;
-            args[1] = null;
-            args[2] = null;
-            args[3] = null;
-            args[4] = null;
-            args[5] = null;
-
-            ParameterModifier[] mods = new ParameterModifier[1];
-            mods[0] = new ParameterModifier(6);
-            mods[0][1] = true;
-            mods[0][2] = true;
-            mods[0][3] = true;
-            mods[0][4] = true;
-            mods[0][5] = true;
-
-            sectionType.InvokeMember(
-                "GenerateSectionGeometry",
-                BindingFlags.InvokeMethod,
-                null,
-                sectionObj,
-                args,
-                mods,
-                null,
-                null);
-        }
-
-        private void SendSectionPlaneCommand(Document doc, Point3d center, Vector3d dir,
-            Point3d minPt, Point3d maxPt)
-        {
-            var normal = dir.GetNormal();
             Vector3d uRef = Math.Abs(normal.X) < 0.9 ? Vector3d.XAxis : Vector3d.ZAxis;
             Vector3d u = normal.CrossProduct(uRef).GetNormal();
             var halfSize = center.DistanceTo(maxPt) * ViewScaleFactor;
@@ -209,7 +134,14 @@ namespace GStarCad.Net.Demo.Commands
                 fromPt.X, fromPt.Y, fromPt.Z,
                 toPt.X, toPt.Y, toPt.Z,
                 viewSide.X, viewSide.Y, viewSide.Z);
+
+            // Step 1: create section plane at the computed position
             doc.SendStringToExecute(cmd, true, false, false);
+
+            // Step 2: convert the last-created section plane to 2D block
+            // _L selects the last entity (the section plane just created)
+            // _N creates a new block; accepts defaults for remaining prompts
+            doc.SendStringToExecute("SECTIONPLANETOBLOCK _L _N 0,0,0 1 1 0 ", true, false, false);
         }
     }
 }
