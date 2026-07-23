@@ -118,19 +118,18 @@ namespace GStarCad.Net.Demo.Commands
 
         private static bool ExportStl(Document doc, string stlPath)
         {
-            try
-            {
-                var ed = doc.Editor;
-                ed.Command("_.FILEDIA", 0);
-                ed.Command("_.EXPORT", stlPath.Replace('\\', '/'));
-                ed.Command("_.FILEDIA", 1);
+            doc.SendStringToExecute(
+                string.Format("_.FILEDIA 0 _.EXPORT {0} _.FILEDIA 1 ", stlPath.Replace('\\', '/')),
+                false, false, false);
 
-                return File.Exists(stlPath) && new FileInfo(stlPath).Length >= 100;
-            }
-            catch (Exception)
+            var deadline = DateTime.Now.AddSeconds(60);
+            while (DateTime.Now < deadline)
             {
-                return false;
+                System.Windows.Forms.Application.DoEvents();
+                if (File.Exists(stlPath) && new FileInfo(stlPath).Length >= 100)
+                    return true;
             }
+            return false;
         }
 
         private static void TryDeleteFile(string path)
