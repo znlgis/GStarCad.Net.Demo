@@ -150,13 +150,16 @@ namespace GStarCad.Net.Demo.Commands
                 }
                 else
                 {
-                    // ACISOUT succeeded: SAT → STEP conversion
-                    ed.Command("_.FILEDIA", 0);
-                    ed.Command("_.OPEN", satPath.Replace('\\', '/'));
-                    ed.Command("_.SAVEAS", 2018, tempStep3D.Replace('\\', '/'));
-                    ed.Command("_.CLOSE");
+                    // ACISOUT succeeded: convert SAT → STEP via script (GStarCAD can't OPEN SAT in-process)
+                    Log.Debug("SAT export succeeded, converting to STEP...");
+                    if (!ConvertSatToStepViaScript(satPath, tempStep3D, ed, tempDir))
+                    {
+                        // Conversion failed, try using SAT directly with OCCTTool as fallback
+                        Log.Warn("SAT→STEP conversion failed, trying SAT as input.");
+                        TryDeleteFile(tempStep3D); // Remove expected STEP, will use SAT
+                        File.Copy(satPath, tempStep3D, true);
+                    }
                     TryDeleteFile(satPath);
-                    Log.Debug("SAT→STEP conversion complete.");
                 }
                 stepSw.Stop();
                 Log.Debug(string.Format("Step 1 complete in {0}ms", stepSw.ElapsedMilliseconds));
@@ -219,6 +222,58 @@ namespace GStarCad.Net.Demo.Commands
                 "\n输出文件: {0}", tempStep2D));
             ed.WriteMessage("\n用 GStarCAD 打开此文件可查看 4 个正交视图的 2D 投影.");
             ed.WriteMessage("\n需要 DWG 格式: 打开文件后执行 SAVEAS 保存.");
+        }
+
+        private bool ConvertSatToStepViaScript(string satPath, string stepPath, Editor ed, string tempDir)
+        {
+            Log.Debug(string.Format("ConvertSatToStepViaScript: sat={0}, step={1}", satPath, stepPath));
+            var gcadExe = Process.GetCurrentProcess().MainModule.FileName;
+            var scriptPath = Path.Combine(tempDir, "_sat2step.scr");
+
+            var script = string.Format(CultureInfo.InvariantCulture,
+                "FILEDIA 0\n_.OPEN \"{0}\"\n_.SAVEAS 2018 \"{1}\"\n_.QUIT Y\n",
+                satPath.Replace('\\', '/'), stepPath.Replace('\\', '/'));
+
+            File.WriteAllText(scriptPath, script);
+            Log.Debug(string.Format("SAT→STEP script: {0}", script.Replace("\n", "\\n")));
+
+            try
+            {
+                using (var proc = Process.Start(new ProcessStartInfo
+                {
+                    FileName = gcadExe,
+                    Arguments = string.Format("/b \"{0}\"", scriptPath),
+                    UseShellExecute = true,
+                    WindowStyle = ProcessWindowStyle.Minimized,
+                }))
+                {
+                    if (proc == null)
+                    {
+                        Log.Error("ConvertSatToStepViaScript: Process.Start returned null.");
+                        TryDeleteFile(scriptPath);
+                        return false;
+                    }
+
+                    if (!proc.WaitForExit(60000))
+                    {
+                        Log.Error("ConvertSatToStepViaScript: timeout.");
+                        try { proc.Kill(); } catch { }
+                        TryDeleteFile(scriptPath);
+                        return false;
+                    }
+                }
+
+                TryDeleteFile(scriptPath);
+                var result = File.Exists(stepPath);
+                Log.Debug(string.Format("ConvertSatToStepViaScript: result={0}", result));
+                return result;
+            }
+            catch (System.Exception ex)
+            {
+                Log.Error("ConvertSatToStepViaScript failed.", ex);
+                TryDeleteFile(scriptPath);
+                return false;
+            }
         }
 
         private int RunOCCTTool(string inputStep, string outputStep, Editor ed)
