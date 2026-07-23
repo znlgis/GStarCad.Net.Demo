@@ -1,9 +1,9 @@
 {
     "profiles": {
-        "GStarCAD 2022": {
-            "commandName": "Executable",
-            "executablePath": "C:\\Program Files\\GStarCAD\\GStarCAD 2022\\GstarCAD.exe",
-            "workingDirectory": "$(OutputPath)"
-        }
+      "GStarCAD 2022": {
+        "commandName": "Executable",
+        "executablePath": "C:\\Program Files\\浩辰软件\\浩辰CAD2022\\gcad.exe",
+        "workingDirectory": "$(OutputPath)"
+      }
     }
 }
