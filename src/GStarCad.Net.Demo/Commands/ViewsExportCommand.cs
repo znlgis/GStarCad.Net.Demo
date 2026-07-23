@@ -1,16 +1,16 @@
+using System;
+using System.Diagnostics;
+using System.Globalization;
+using System.IO;
+using System.Reflection;
+using System.Threading;
 using GrxCAD.ApplicationServices;
 using GrxCAD.DatabaseServices;
 using GrxCAD.EditorInput;
 using GrxCAD.Geometry;
 using GrxCAD.Runtime;
 using log4net;
-using System;
-using System.Collections.Generic;
-using System.Diagnostics;
-using System.Globalization;
-using System.IO;
-using System.Reflection;
-using System.Text;
+using Exception = System.Exception;
 
 namespace GStarCad.Net.Demo.Commands
 {
@@ -33,7 +33,7 @@ namespace GStarCad.Net.Demo.Commands
             selOpts.MessageForAdding = "\n选择3D实体: ";
 
             var filter = new SelectionFilter(
-                new TypedValue[] { new TypedValue((int)DxfCode.Start, "3DSOLID") });
+                new[] { new TypedValue((int)DxfCode.Start, "3DSOLID") });
 
             var selRes = ed.GetSelection(selOpts, filter);
             if (selRes.Status != PromptStatus.OK)
@@ -76,6 +76,7 @@ namespace GStarCad.Net.Demo.Commands
                             Math.Max(maxPt.Value.Z, ext.MaxPoint.Z));
                     }
                 }
+
                 tr.Commit();
             }
 
@@ -93,16 +94,10 @@ namespace GStarCad.Net.Demo.Commands
             var assemblyDir = Path.GetDirectoryName(
                 Assembly.GetExecutingAssembly().Location);
             var tempDir = Path.Combine(assemblyDir, "temp");
-            if (!Directory.Exists(tempDir))
-            {
-                Directory.CreateDirectory(tempDir);
-            }
+            if (!Directory.Exists(tempDir)) Directory.CreateDirectory(tempDir);
 
             var originalName = Path.GetFileNameWithoutExtension(db.Filename);
-            if (string.IsNullOrEmpty(originalName))
-            {
-                originalName = "untitled";
-            }
+            if (string.IsNullOrEmpty(originalName)) originalName = "untitled";
             var timestamp = DateTime.Now.ToString("yyyyMMddHHmmss");
             var baseName = string.Format("{0}_{1}", originalName, timestamp);
 
@@ -139,7 +134,7 @@ namespace GStarCad.Net.Demo.Commands
                     System.Windows.Forms.Application.DoEvents();
                     if (File.Exists(satPath) && new FileInfo(satPath).Length > 100)
                         break;
-                    System.Threading.Thread.Sleep(200);
+                    Thread.Sleep(200);
                 }
 
                 if (!File.Exists(satPath) || new FileInfo(satPath).Length < 100)
@@ -157,7 +152,7 @@ namespace GStarCad.Net.Demo.Commands
                         System.Windows.Forms.Application.DoEvents();
                         if (File.Exists(stlPath) && new FileInfo(stlPath).Length > 100)
                             break;
-                        System.Threading.Thread.Sleep(200);
+                        Thread.Sleep(200);
                     }
 
                     if (File.Exists(stlPath) && new FileInfo(stlPath).Length > 100)
@@ -185,17 +180,20 @@ namespace GStarCad.Net.Demo.Commands
                         TryDeleteFile(tempStep3D);
                         File.Copy(satPath, tempStep3D, true);
                     }
+
                     TryDeleteFile(satPath);
                 }
+
                 stepSw.Stop();
                 Log.Debug(string.Format("Step 1 complete in {0}ms", stepSw.ElapsedMilliseconds));
             }
-            catch (System.Exception ex)
+            catch (Exception ex)
             {
                 stepSw.Stop();
                 Log.Error(string.Format("Step 1 failed after {0}ms", stepSw.ElapsedMilliseconds), ex);
                 throw;
             }
+
             ed.WriteMessage(" 完成.");
 
             // Step 2: Run OCCTTool for HLR projection
@@ -222,15 +220,17 @@ namespace GStarCad.Net.Demo.Commands
                     ed.WriteMessage("\nOCCTTool 未生成输出文件.");
                     return;
                 }
+
                 stepSw.Stop();
                 Log.Debug(string.Format("Step 2 complete in {0}ms", stepSw.ElapsedMilliseconds));
             }
-            catch (System.Exception ex)
+            catch (Exception ex)
             {
                 stepSw.Stop();
                 Log.Error(string.Format("Step 2 failed after {0}ms", stepSw.ElapsedMilliseconds), ex);
                 throw;
             }
+
             ed.WriteMessage(" 完成.");
 
             // Step 3: Output 2D IGES (skip DWG conversion to avoid second GStarCAD instance)
@@ -266,12 +266,12 @@ namespace GStarCad.Net.Demo.Commands
             try
             {
                 using (var proc = Process.Start(new ProcessStartInfo
-                {
-                    FileName = gcadExe,
-                    Arguments = string.Format("/b \"{0}\"", scriptPath),
-                    UseShellExecute = true,
-                    WindowStyle = ProcessWindowStyle.Minimized,
-                }))
+                       {
+                           FileName = gcadExe,
+                           Arguments = string.Format("/b \"{0}\"", scriptPath),
+                           UseShellExecute = true,
+                           WindowStyle = ProcessWindowStyle.Minimized
+                       }))
                 {
                     if (proc == null)
                     {
@@ -283,7 +283,14 @@ namespace GStarCad.Net.Demo.Commands
                     if (!proc.WaitForExit(60000))
                     {
                         Log.Error("ConvertSatToStepViaScript: timeout.");
-                        try { proc.Kill(); } catch { }
+                        try
+                        {
+                            proc.Kill();
+                        }
+                        catch
+                        {
+                        }
+
                         TryDeleteFile(scriptPath);
                         return false;
                     }
@@ -294,7 +301,7 @@ namespace GStarCad.Net.Demo.Commands
                 Log.Debug(string.Format("ConvertSatToStepViaScript: result={0}", result));
                 return result;
             }
-            catch (System.Exception ex)
+            catch (Exception ex)
             {
                 Log.Error("ConvertSatToStepViaScript failed.", ex);
                 TryDeleteFile(scriptPath);
@@ -314,7 +321,7 @@ namespace GStarCad.Net.Demo.Commands
             var candidateDirs = new[]
             {
                 Path.Combine(pluginDir, @"..\..\..\..\tools\OCCTTool\bin\Release\net48"),
-                Path.Combine(pluginDir, @"..\..\..\..\tools\OCCTTool\bin\Debug\net48"),
+                Path.Combine(pluginDir, @"..\..\..\..\tools\OCCTTool\bin\Debug\net48")
             };
 
             string toolDir = null;
@@ -341,6 +348,7 @@ namespace GStarCad.Net.Demo.Commands
                     Log.Error(string.Format("  Searched: {0}", fullPath));
                     ed.WriteMessage(string.Format("\n  {0}", fullPath));
                 }
+
                 return -1;
             }
 
@@ -353,7 +361,7 @@ namespace GStarCad.Net.Demo.Commands
                 CreateNoWindow = true,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
-                WorkingDirectory = toolDir,
+                WorkingDirectory = toolDir
             };
 
             Log.Debug(string.Format("Starting OCCTTool: {0} {1}", exe, psi.Arguments));
@@ -378,29 +386,31 @@ namespace GStarCad.Net.Demo.Commands
                     {
                         Log.Error(string.Format("OCCTTool timed out after {0}ms.", ToolTimeoutMs));
                         ed.WriteMessage("\nOCCTTool 超时.");
-                        try { proc.Kill(); } catch { }
+                        try
+                        {
+                            proc.Kill();
+                        }
+                        catch
+                        {
+                        }
+
                         return -3;
                     }
 
                     Log.Debug(string.Format("OCCTTool exited with code {0}", proc.ExitCode));
 
-                    if (!string.IsNullOrEmpty(stdout))
-                    {
-                        Log.Debug(string.Format("OCCTTool stdout: {0}", stdout.Trim()));
-                    }
+                    if (!string.IsNullOrEmpty(stdout)) Log.Debug(string.Format("OCCTTool stdout: {0}", stdout.Trim()));
                     if (proc.ExitCode != 0)
-                    {
                         if (!string.IsNullOrEmpty(stderr))
                         {
                             Log.Error(string.Format("OCCTTool stderr: {0}", stderr.Trim()));
                             ed.WriteMessage(string.Format("\nOCCTTool 错误: {0}", stderr.Trim()));
                         }
-                    }
 
                     return proc.ExitCode;
                 }
             }
-            catch (System.Exception ex)
+            catch (Exception ex)
             {
                 Log.Error("Exception starting OCCTTool process.", ex);
                 ed.WriteMessage(string.Format("\n启动 OCCTTool 异常: {0}", ex.Message));

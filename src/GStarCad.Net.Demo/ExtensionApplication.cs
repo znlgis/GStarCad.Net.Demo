@@ -1,4 +1,3 @@
-using System;
 using System.IO;
 using System.Reflection;
 using GrxCAD.Runtime;
@@ -20,19 +19,18 @@ namespace GStarCad.Net.Demo
                 var logDir = Path.Combine(pluginDir, "logs");
                 Directory.CreateDirectory(logDir);
 
-                log4net.GlobalContext.Properties["LogPath"] = pluginDir;
+                GlobalContext.Properties["LogPath"] = pluginDir;
 
                 var configPath = Path.Combine(pluginDir, "log4net.config");
                 if (File.Exists(configPath))
-                {
                     XmlConfigurator.Configure(new FileInfo(configPath));
-                }
                 else
-                {
                     BasicConfigurator.Configure();
-                }
             }
-            catch { /* don't let logging init crash the plugin */ }
+            catch
+            {
+                /* don't let logging init crash the plugin */
+            }
 
             Log.Info("=== GStarCad.Net.Demo plugin initialized ===");
         }
