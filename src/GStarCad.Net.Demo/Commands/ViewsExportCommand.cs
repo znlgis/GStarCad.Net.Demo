@@ -217,27 +217,16 @@ namespace GStarCad.Net.Demo.Commands
             var stem = Path.Combine(
                 Path.GetDirectoryName(exportPath),
                 Path.GetFileNameWithoutExtension(exportPath));
-
-            var doc = Application.DocumentManager.MdiActiveDocument;
             string satPath = stem + ".sat";
+            string stlPath = stem + ".stl";
 
-            // Set PICKFIRST and implied selection so ACISOUT auto-accepts objects
-            Application.SetSystemVariable("PICKFIRST", 1);
-            ed.SetImpliedSelection(objIds);
             ed.Command("_.FILEDIA", 0);
 
-            // Use SendStringToExecute: ACISOUT → Enter (accept selection) → filename → Enter
-            // Then poll for the file synchronously via Windows message pump
-            var satCmd = string.Format("_.ACISOUT\n{0}\n", satPath.Replace('\\', '/'));
-            Log.Debug(string.Format("ACISOUT: {0}", satCmd.Replace("\n", "\\n")));
-            doc.SendStringToExecute(satCmd, false, false, false);
-
-            // Poll with message pumping until ACISOUT completes
-            var deadline = DateTime.Now.AddSeconds(15);
-            while (DateTime.Now < deadline)
+            // Use _P (Previous selection) at the "Select objects:" prompt
+            // to pick up the entities the user selected via GetSelection()
+            try
             {
-                System.Windows.Forms.Application.DoEvents();
-                System.Threading.Thread.Sleep(100);
+                ed.Command("_.ACISOUT", "_P", "", satPath, "");
                 if (File.Exists(satPath) && new FileInfo(satPath).Length > 100)
                 {
                     File.Copy(satPath, exportPath, true);
@@ -246,19 +235,11 @@ namespace GStarCad.Net.Demo.Commands
                     return true;
                 }
             }
+            catch (System.Exception ex) { Log.Debug("ACISOUT: " + ex.Message); }
 
-            // Fallback: EXPORT → STL (mesh)
-            string stlPath = stem + ".stl";
-            ed.SetImpliedSelection(objIds);
-            var stlCmd = string.Format("_.EXPORT\n{0}\n", stlPath.Replace('\\', '/'));
-            Log.Debug(string.Format("EXPORT STL: {0}", stlCmd.Replace("\n", "\\n")));
-            doc.SendStringToExecute(stlCmd, false, false, false);
-
-            deadline = DateTime.Now.AddSeconds(15);
-            while (DateTime.Now < deadline)
+            try
             {
-                System.Windows.Forms.Application.DoEvents();
-                System.Threading.Thread.Sleep(100);
+                ed.Command("_.EXPORT", "_P", "", stlPath, "");
                 if (File.Exists(stlPath) && new FileInfo(stlPath).Length > 100)
                 {
                     File.Copy(stlPath, exportPath, true);
@@ -267,6 +248,7 @@ namespace GStarCad.Net.Demo.Commands
                     return true;
                 }
             }
+            catch (System.Exception ex) { Log.Debug("STL export: " + ex.Message); }
 
             Log.Error("All export formats failed.");
             return false;
