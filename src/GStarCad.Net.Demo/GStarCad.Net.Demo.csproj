@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <AssemblyName>GStarCad.Net.Demo</AssemblyName>
+    <RootNamespace>GStarCad.Net.Demo</RootNamespace>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="GStarCad.Net" Version="20.22.0" />
+  </ItemGroup>
+
+</Project>

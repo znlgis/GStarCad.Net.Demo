@@ -1,0 +1,5 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/GStarCad.Net.Demo/GStarCad.Net.Demo.csproj" />
+  </Folder>
+</Solution>
