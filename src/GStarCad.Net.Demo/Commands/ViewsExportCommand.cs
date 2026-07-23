@@ -74,75 +74,76 @@ namespace GStarCad.Net.Demo.Commands
                 (minPt.Value.Y + maxPt.Value.Y) / 2.0,
                 (minPt.Value.Z + maxPt.Value.Z) / 2.0);
 
-            // Suppress FLATSHOT dialog
-            Application.SetSystemVariable("CMDDIA", 0);
-            Application.SetSystemVariable("FILEDIA", 0);
-            try
+            var views = new[]
             {
-                var views = new[]
-                {
-                    new { Name = "前视图", Dir = new Vector3d(0,  1, 0) },
-                    new { Name = "后视图", Dir = new Vector3d(0, -1, 0) },
-                    new { Name = "左视图", Dir = new Vector3d(1,  0, 0) },
-                    new { Name = "右视图", Dir = new Vector3d(-1, 0, 0) },
-                };
+                new { Name = "前视图", Dir = new Vector3d(0,  1, 0) },
+                new { Name = "后视图", Dir = new Vector3d(0, -1, 0) },
+                new { Name = "左视图", Dir = new Vector3d(1,  0, 0) },
+                new { Name = "右视图", Dir = new Vector3d(-1, 0, 0) },
+            };
 
-                foreach (var view in views)
-                {
-                    try
-                    {
-                        SetViewAndFlatshot(doc, ed, center, view.Dir);
-                        ed.WriteMessage(string.Format("\n{0} — 生成成功.", view.Name));
-                    }
-                    catch (System.Exception ex)
-                    {
-                        ed.WriteMessage(string.Format("\n{0} — 失败: {1}", view.Name, ex.Message));
-                    }
-                }
+            dynamic comDoc = doc.AcadDocument;
 
-                var assemblyDir = Path.GetDirectoryName(
-                    System.Reflection.Assembly.GetExecutingAssembly().Location);
-                var tempDir = Path.Combine(assemblyDir, "temp");
-                if (!Directory.Exists(tempDir))
-                {
-                    Directory.CreateDirectory(tempDir);
-                }
-
-                var originalName = Path.GetFileNameWithoutExtension(db.Filename);
-                if (string.IsNullOrEmpty(originalName))
-                {
-                    originalName = "untitled";
-                }
-                var timestamp = DateTime.Now.ToString("yyyyMMddHHmmss");
-                var outputPath = Path.Combine(tempDir,
-                    string.Format("{0}_{1}_views.dwg", originalName, timestamp));
-
-                db.SaveAs(outputPath, DwgVersion.Current);
-
-                ed.WriteMessage(string.Format("\n视图导出完成. 输出文件: {0}", outputPath));
-            }
-            finally
+            foreach (var view in views)
             {
-                Application.SetSystemVariable("CMDDIA", 1);
-                Application.SetSystemVariable("FILEDIA", 1);
+                try
+                {
+                    Generate2DViewSync(comDoc, center, view.Dir, minPt.Value, maxPt.Value);
+                    ed.WriteMessage(string.Format("\n{0} — 生成成功.", view.Name));
+                }
+                catch (System.Exception ex)
+                {
+                    ed.WriteMessage(string.Format("\n{0} — 失败: {1}", view.Name, ex.Message));
+                }
             }
+
+            var assemblyDir = Path.GetDirectoryName(
+                System.Reflection.Assembly.GetExecutingAssembly().Location);
+            var tempDir = Path.Combine(assemblyDir, "temp");
+            if (!Directory.Exists(tempDir))
+            {
+                Directory.CreateDirectory(tempDir);
+            }
+
+            var originalName = Path.GetFileNameWithoutExtension(db.Filename);
+            if (string.IsNullOrEmpty(originalName))
+            {
+                originalName = "untitled";
+            }
+            var timestamp = DateTime.Now.ToString("yyyyMMddHHmmss");
+            var outputPath = Path.Combine(tempDir,
+                string.Format("{0}_{1}_views.dwg", originalName, timestamp));
+
+            db.SaveAs(outputPath, DwgVersion.Current);
+
+            ed.WriteMessage(string.Format("\n视图导出完成. 输出文件: {0}", outputPath));
         }
 
-        private void SetViewAndFlatshot(Document doc, Editor ed, Point3d center, Vector3d dir)
+        private void Generate2DViewSync(dynamic comDoc, Point3d center, Vector3d viewDir,
+            Point3d minPt, Point3d maxPt)
         {
-            // 1. Set camera to orthographic view direction
-            var view = new ViewTableRecord();
-            view.ViewDirection = dir;
-            view.Target = center;
-            view.CenterPoint = new Point2d(0, 0);
-            view.Height = 200;
-            view.Width = 200;
-            ed.SetCurrentView(view);
+            var normal = viewDir.GetNormal();
+            Vector3d uRef = Math.Abs(normal.X) < 0.9 ? Vector3d.XAxis : Vector3d.ZAxis;
+            Vector3d u = normal.CrossProduct(uRef).GetNormal();
+            var halfSize = center.DistanceTo(maxPt) * ViewScaleFactor;
 
-            // 2. Run FLATSHOT to generate 2D projection from the current view.
-            // FLATSHOT captures the current viewport's display and flattens it to 2D.
-            doc.SendStringToExecute(
-                "FLATSHOT ", true, false, false);
+            var fromPt = center + u * halfSize;
+            var toPt = center - u * halfSize;
+            var viewSide = center + normal * halfSize;
+
+            // Step 1: Create section plane via COM synchronous SendCommand
+            var cmdPlane = string.Format(CultureInfo.InvariantCulture,
+                "SECTIONPLANE {0:F6},{1:F6},{2:F6} {3:F6},{4:F6},{5:F6} {6:F6},{7:F6},{8:F6} ",
+                fromPt.X, fromPt.Y, fromPt.Z,
+                toPt.X, toPt.Y, toPt.Z,
+                viewSide.X, viewSide.Y, viewSide.Z);
+            comDoc.SendCommand(cmdPlane);
+
+            // Step 2: Convert the last-created section plane to 2D block.
+            // _L = select Last entity (the section plane just created)
+            // _N = create New block
+            // Remaining params: insertion point, scale X/Y, rotation
+            comDoc.SendCommand("SECTIONPLANETOBLOCK _L _N 0,0,0 1 1 0 ");
         }
     }
 }
