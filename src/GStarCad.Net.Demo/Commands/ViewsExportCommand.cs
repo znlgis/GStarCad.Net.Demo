@@ -212,13 +212,11 @@ namespace GStarCad.Net.Demo.Commands
 
         private bool ExportToStep(dynamic comDoc, string stepPath, Point3d minPt, Point3d maxPt, Editor ed)
         {
-            Log.Debug(string.Format("ExportToStep (crossing window): {0}, min={1}, max={2}", stepPath, minPt, maxPt));
+            Log.Debug(string.Format("ExportToStep (acSelectionSetAll): path={0}", stepPath));
 
-            const int acSelectionSetCrossing = 1;
-            var expand = Math.Max(
-                Math.Max(maxPt.X - minPt.X, maxPt.Y - minPt.Y),
-                maxPt.Z - minPt.Z) * 0.1;
-            if (expand < 1.0) expand = 1.0;
+            const int acSelectionSetAll = 4;
+            var filterType = new short[] { 0 };
+            var filterData = new object[] { "3DSOLID" };
 
             for (int attempt = 0; attempt < 3; attempt++)
             {
@@ -228,31 +226,26 @@ namespace GStarCad.Net.Demo.Commands
                     dynamic ss = null;
                     try
                     {
-                        ss = comDoc.SelectionSets.Item("OCCT_XW");
+                        ss = comDoc.SelectionSets.Item("OCCT_ALL");
                         ss.Delete();
                     }
                     catch { /* may not exist */ }
 
-                    ss = comDoc.SelectionSets.Add("OCCT_XW");
-                    Log.Debug("Created COM SelectionSet 'OCCT_XW'.");
+                    ss = comDoc.SelectionSets.Add("OCCT_ALL");
+                    Log.Debug("Created COM SelectionSet 'OCCT_ALL'.");
 
-                    var filterType = new short[] { 0 };
-                    var filterData = new object[] { "3DSOLID" };
-                    var pt1 = new double[] { minPt.X - expand, minPt.Y - expand, minPt.Z - expand };
-                    var pt2 = new double[] { maxPt.X + expand, maxPt.Y + expand, maxPt.Z + expand };
-
-                    ss.Select(acSelectionSetCrossing, pt1, pt2, filterType, filterData);
-                    Log.Debug(string.Format("Crossing window: Count={0}", ss.Count));
+                    ss.Select(acSelectionSetAll, null, null, filterType, filterData);
+                    Log.Debug(string.Format("SelectionSet.All(3DSOLID): Count={0}", ss.Count));
 
                     if (ss.Count == 0)
                     {
-                        ed.WriteMessage("\n包围盒窗口内未找到3DSOLID.");
-                        Log.Warn("Crossing window returned 0 entities.");
+                        ed.WriteMessage("\n当前文档中未找到3DSOLID实体.");
+                        Log.Warn("acSelectionSetAll returned 0 entities.");
                         ss.Delete();
-                        continue;
+                        return false;
                     }
 
-                    Log.Debug("Calling comDoc.Export(STEP)...");
+                    Log.Debug(string.Format("Calling comDoc.Export(count={0})...", ss.Count));
                     comDoc.Export(stepPath, "STEP", ss);
                     Log.Debug("comDoc.Export returned.");
 
