@@ -9,7 +9,6 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Reflection;
-using System.Runtime.InteropServices;
 using System.Threading;
 
 namespace GStarCad.Net.Demo.Commands
@@ -291,15 +290,44 @@ namespace GStarCad.Net.Demo.Commands
         {
             try
             {
-                dynamic comApp = Marshal.GetActiveObject("Gcad.Application");
-                dynamic newDoc = comApp.Documents.Open(stepPath);
-                Thread.Sleep(1000);
+                // Launch an isolated GStarCAD process with a script file to avoid
+                // COM re-entrancy and document switching during active command execution.
+                var gcadExe = Process.GetCurrentProcess().MainModule.FileName;
+                var scriptDir = Path.GetDirectoryName(dwgPath);
+                var scriptPath = Path.Combine(scriptDir, "_gcad_convert.scr");
 
-                newDoc.SaveAs(dwgPath);
-                Thread.Sleep(500);
+                var script = string.Format(CultureInfo.InvariantCulture,
+                    "FILEDIA 0\n_.OPEN \"{0}\"\n_.SAVEAS 2018 \"{1}\"\n_.QUIT Y\n",
+                    stepPath, dwgPath);
+                File.WriteAllText(scriptPath, script);
 
-                newDoc.Close();
-                Thread.Sleep(300);
+                var psi = new ProcessStartInfo
+                {
+                    FileName = gcadExe,
+                    Arguments = string.Format("/b \"{0}\"", scriptPath),
+                    UseShellExecute = true,
+                    WindowStyle = ProcessWindowStyle.Minimized,
+                };
+
+                using (var proc = Process.Start(psi))
+                {
+                    if (proc == null)
+                    {
+                        ed.WriteMessage("\n无法启动GStarCAD进程进行转换.");
+                        TryDeleteFile(scriptPath);
+                        return false;
+                    }
+
+                    if (!proc.WaitForExit(60000))
+                    {
+                        ed.WriteMessage("\nGStarCAD转换进程超时.");
+                        try { proc.Kill(); } catch { }
+                        TryDeleteFile(scriptPath);
+                        return false;
+                    }
+                }
+
+                TryDeleteFile(scriptPath);
 
                 return File.Exists(dwgPath);
             }
