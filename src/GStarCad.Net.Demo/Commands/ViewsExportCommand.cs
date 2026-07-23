@@ -146,22 +146,18 @@ namespace GStarCad.Net.Demo.Commands
 
             var fromPt = center + u * halfSize;
             var toPt = center - u * halfSize;
-            var viewSide = center + normal * halfSize;
 
-            // Step 1: Create section plane (synchronous COM command)
+            // GStarCAD SECTIONPLANE takes 2 points (from, to) — no third point.
             var cmdPlane = string.Format(CultureInfo.InvariantCulture,
-                "SECTIONPLANE {0:F6},{1:F6},{2:F6} {3:F6},{4:F6},{5:F6} {6:F6},{7:F6},{8:F6} ",
+                "SECTIONPLANE {0:F6},{1:F6},{2:F6} {3:F6},{4:F6},{5:F6} ",
                 fromPt.X, fromPt.Y, fromPt.Z,
-                toPt.X, toPt.Y, toPt.Z,
-                viewSide.X, viewSide.Y, viewSide.Z);
+                toPt.X, toPt.Y, toPt.Z);
             comDoc.SendCommand(cmdPlane);
 
-            // Step 2: Convert to 2D block with unique insertion point.
-            // _L = Last entity (the section plane just created)
-            // _N = New block
-            // Remaining: insertion point, scale X/Y, rotation
+            // GStarCAD SECTIONPLANETOBLOCK: _L selects last entity (section plane).
+            // No _N option; directly provides insertion point, scale X/Y, rotation.
             var cmdBlock = string.Format(CultureInfo.InvariantCulture,
-                "SECTIONPLANETOBLOCK _L _N {0:F6},{1:F6},0 1 1 0 ",
+                "SECTIONPLANETOBLOCK _L {0:F6},{1:F6},0 1 1 0 ",
                 insX, insY);
             comDoc.SendCommand(cmdBlock);
         }
