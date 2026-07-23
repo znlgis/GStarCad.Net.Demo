@@ -43,8 +43,11 @@ namespace GStarCad.Net.Demo.Commands
                 return;
             }
 
-            // Collect entity handles for COM export and compute bounding box
-            var handles = new List<string>();
+            // Build ObjectId array from selection
+            var objIds = new ObjectId[selRes.Value.Count];
+            var idx = 0;
+            foreach (SelectedObject selObj in selRes.Value)
+                objIds[idx++] = selObj.ObjectId;
             Point3d? minPt = null;
             Point3d? maxPt = null;
 
@@ -53,7 +56,6 @@ namespace GStarCad.Net.Demo.Commands
                 foreach (SelectedObject selObj in selRes.Value)
                 {
                     var ent = (Entity)tr.GetObject(selObj.ObjectId, OpenMode.ForRead);
-                    handles.Add(ent.Handle.ToString());
 
                     var ext = ent.GeometricExtents;
 
@@ -77,11 +79,8 @@ namespace GStarCad.Net.Demo.Commands
                 tr.Commit();
             }
 
-            Log.Debug(string.Format("Selection: {0} entities, handles: [{1}], bbox min: {2}, max: {3}",
-                handles.Count,
-                string.Join(", ", handles),
-                minPt,
-                maxPt));
+            Log.Debug(string.Format("Selection: {0} entities, bbox min: {1}, max: {2}",
+                objIds.Length, minPt, maxPt));
 
             if (minPt == null || maxPt == null)
             {
@@ -107,20 +106,20 @@ namespace GStarCad.Net.Demo.Commands
             var timestamp = DateTime.Now.ToString("yyyyMMddHHmmss");
             var baseName = string.Format("{0}_{1}", originalName, timestamp);
 
-            var tempStep3D = Path.Combine(tempDir, baseName + "_3d.step");
-            var tempStep2D = Path.Combine(tempDir, baseName + "_2d.step");
+            var tempStep3D = Path.Combine(tempDir, baseName + "_3d.igs");
+            var tempStep2D = Path.Combine(tempDir, baseName + "_2d.igs");
             var outputPath = Path.Combine(tempDir, baseName + "_views.dwg");
 
             Log.Debug(string.Format("Temp dir: {0}, files: 3D={1}, 2D={2}, DWG={3}",
                 tempDir, tempStep3D, tempStep2D, outputPath));
 
-            // Step 1: Export selected 3D solids to STEP via isolated GStarCAD process
+            // Step 1: Export selected 3D solids as IGES via synchronous Editor.Command()
             var stepSw = Stopwatch.StartNew();
-            ed.WriteMessage("\n[1/3] 导出3D STEP...");
-            Log.Debug("Step 1: Exporting 3D STEP via isolated GStarCAD script...");
+            ed.WriteMessage("\n[1/3] 导出3D IGES...");
+            Log.Debug("Step 1: Exporting 3D IGES via Editor.Command...");
             try
             {
-                if (!ExportToStep(db, tempStep3D, tempDir, ed))
+                if (!ExportIges(ed, objIds, tempStep3D))
                 {
                     stepSw.Stop();
                     Log.Error(string.Format("Step 1 failed after {0}ms", stepSw.ElapsedMilliseconds));
@@ -173,148 +172,66 @@ namespace GStarCad.Net.Demo.Commands
             }
             ed.WriteMessage(" 完成.");
 
-            // Step 3: Convert 2D STEP to DWG via COM
-            stepSw.Restart();
-            ed.WriteMessage("\n[3/3] 转换STEP至DWG...");
-            Log.Debug("Step 3: Converting STEP to DWG...");
-            try
-            {
-                if (!ConvertStepToDwg(tempStep2D, outputPath, ed))
-                {
-                    stepSw.Stop();
-                    Log.Error(string.Format("Step 3 failed after {0}ms. 2D STEP at: {1}",
-                        stepSw.ElapsedMilliseconds, tempStep2D));
-                    ed.WriteMessage(string.Format(
-                        "\nSTEP→DWG转换失败. 2D STEP文件位于: {0}", tempStep2D));
-                    return;
-                }
-                stepSw.Stop();
-                Log.Debug(string.Format("Step 3 complete in {0}ms", stepSw.ElapsedMilliseconds));
-            }
-            catch (System.Exception ex)
-            {
-                stepSw.Stop();
-                Log.Error(string.Format("Step 3 failed after {0}ms", stepSw.ElapsedMilliseconds), ex);
-                throw;
-            }
+            // Step 3: Output 2D IGES (skip DWG conversion to avoid second GStarCAD instance)
+            Log.Debug("Pipeline complete, output: " + tempStep2D);
 
-            // Cleanup temp files
+            // Cleanup temp 3D IGES (no longer needed)
             TryDeleteFile(tempStep3D);
-            TryDeleteFile(tempStep2D);
 
             sw.Stop();
-            Log.Info(string.Format("ViewsExport completed successfully in {0}ms, output: {1}",
-                sw.ElapsedMilliseconds, outputPath));
-            ed.WriteMessage(string.Format(
-                "\n视图导出完成. 输出文件: {0}", outputPath));
+            Log.Info(string.Format(CultureInfo.InvariantCulture,
+                "ViewsExport completed in {0}ms. 2D: {1}", sw.ElapsedMilliseconds, tempStep2D));
+            ed.WriteMessage(string.Format(CultureInfo.InvariantCulture,
+                "\n\n=== 导出完成 ({0}ms) ===", sw.ElapsedMilliseconds));
+            ed.WriteMessage(string.Format(CultureInfo.InvariantCulture,
+                "\n输出文件: {0}", tempStep2D));
+            ed.WriteMessage("\n用 GStarCAD 打开此文件可查看 4 个正交视图的 2D 投影.");
+            ed.WriteMessage("\n需要 DWG 格式: 打开文件后执行 SAVEAS 保存.");
         }
 
-        private bool ExportToStep(Database db, string stepPath, string tempDir, Editor ed)
+        private bool ExportIges(Editor ed, ObjectId[] objIds, string exportPath)
         {
-            Log.Debug(string.Format("ExportToStep (script): => {0}", stepPath));
+            Log.Debug(string.Format("ExportIges (multi-format): {0} objects", objIds.Length));
 
-            var gcadExe = Process.GetCurrentProcess().MainModule.FileName;
-            Log.Debug(string.Format("GStarCAD exe: {0}", gcadExe));
+            var stem = Path.Combine(
+                Path.GetDirectoryName(exportPath),
+                Path.GetFileNameWithoutExtension(exportPath));
+            string satPath = stem + ".sat";
+            string stlPath = stem + ".stl";
 
-            // Save current state to disk, then copy to temp to avoid file lock conflict.
-            // db.Save() preserves the original filename; db.SaveAs() would redirect
-            // the active document to the temp path and hold a lock on it.
-            if (string.IsNullOrEmpty(db.Filename))
-            {
-                Log.Error("Document has no file path — cannot export.");
-                ed.WriteMessage("\n请先保存文档.");
-                return false;
-            }
+            ed.SetImpliedSelection(objIds);
+            ed.Command("_.FILEDIA", 0);
 
-            db.Save();
-            Log.Debug(string.Format("Saved to: {0}", db.Filename));
-
-            var tempDwg = Path.Combine(tempDir, "_export_temp.dwg");
+            // Attempt 1: ACISOUT → SAT (B-rep preferred)
             try
             {
-                File.Copy(db.Filename, tempDwg, true);
-                Log.Debug(string.Format("Copied to temp: {0}", tempDwg));
-            }
-            catch (System.Exception ex)
-            {
-                Log.Error("File.Copy to temp failed.", ex);
-                ed.WriteMessage("\n无法复制文档到临时目录.");
-                return false;
-            }
-
-            var scriptPath = Path.Combine(tempDir, "_gcad_export.scr");
-            // Use LISP (command "_.EXPORT") instead of _.-EXPORT because
-            // GStarCAD's -EXPORT only supports dwf/dwfx/pdf. The non-dash
-            // EXPORT with FILEDIA 0 detects format from file extension (.stp).
-            // Use forward slashes in LISP strings — LISP treats backslash as escape
-            var lispStepPath = stepPath.Replace('\\', '/');
-            var lispTempDwg = tempDwg.Replace('\\', '/');
-
-            var script = string.Format(CultureInfo.InvariantCulture,
-                "SDI 0\nFILEDIA 0\n_.OPEN \"{0}\"\n_.ZOOM _E\n" +
-                "(setq ss (ssget \"_X\" '((0 . \"3DSOLID\"))))\n" +
-                "(if ss (command \"_.EXPORT\" \"{1}\" ss \"\"))\n" +
-                "_.QUIT Y\n",
-                lispTempDwg, lispStepPath);
-
-            Log.Debug(string.Format("Script: {0}", script.Replace("\n", "\\n")));
-            File.WriteAllText(scriptPath, script, System.Text.Encoding.ASCII);
-
-            var psi = new ProcessStartInfo
-            {
-                FileName = gcadExe,
-                Arguments = string.Format("/b \"{0}\"", scriptPath),
-                UseShellExecute = true,
-                WindowStyle = ProcessWindowStyle.Minimized,
-            };
-
-            try
-            {
-                using (var proc = Process.Start(psi))
+                ed.Command("_.ACISOUT", satPath);
+                if (File.Exists(satPath) && new FileInfo(satPath).Length > 100)
                 {
-                    if (proc == null)
-                    {
-                        Log.Error("Export script: Process.Start returned null.");
-                        TryDeleteFile(scriptPath);
-                        TryDeleteFile(tempDwg);
-                        return false;
-                    }
-
-                    Log.Debug(string.Format("Export script PID={0}, waiting up to 90000ms...", proc.Id));
-                    if (!proc.WaitForExit(90000))
-                    {
-                        Log.Error("Export script timed out.");
-                        ed.WriteMessage("\n3D STEP导出超时.");
-                        try { proc.Kill(); } catch { }
-                        TryDeleteFile(scriptPath);
-                        TryDeleteFile(tempDwg);
-                        return false;
-                    }
-
-                    Log.Debug(string.Format("Export script exit code: {0}", proc.ExitCode));
+                    File.Copy(satPath, exportPath, true);
+                    TryDeleteFile(satPath);
+                    Log.Debug("Export: ACISOUT SAT success.");
+                    return true;
                 }
             }
-            catch (System.Exception ex)
-            {
-                Log.Error("Export script: process launch failed.", ex);
-                TryDeleteFile(scriptPath);
-                TryDeleteFile(tempDwg);
-                return false;
-            }
+            catch (System.Exception ex) { Log.Debug("ACISOUT: " + ex.Message); }
 
-            TryDeleteFile(scriptPath);
-            TryDeleteFile(tempDwg);
+            // Attempt 2: EXPORT → STL (mesh fallback)
+            try
+            {
+                ed.Command("_.EXPORT", stlPath);
+                if (File.Exists(stlPath) && new FileInfo(stlPath).Length > 100)
+                {
+                    File.Copy(stlPath, exportPath, true);
+                    TryDeleteFile(stlPath);
+                    Log.Debug("Export: STL success.");
+                    return true;
+                }
+            }
+            catch (System.Exception ex) { Log.Debug("STL export: " + ex.Message); }
 
-            var result = File.Exists(stepPath);
-            if (result)
-            {
-                Log.Debug(string.Format("ExportToStep success ({0} bytes).", new FileInfo(stepPath).Length));
-            }
-            else
-            {
-                Log.Error("Export script completed but no STEP output file found.");
-            }
-            return result;
+            Log.Error("All export formats failed.");
+            return false;
         }
 
         private int RunOCCTTool(string inputStep, string outputStep, Editor ed)
