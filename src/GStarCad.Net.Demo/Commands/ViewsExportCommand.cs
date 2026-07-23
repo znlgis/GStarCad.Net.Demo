@@ -216,14 +216,29 @@ namespace GStarCad.Net.Demo.Commands
             var gcadExe = Process.GetCurrentProcess().MainModule.FileName;
             Log.Debug(string.Format("GStarCAD exe: {0}", gcadExe));
 
-            // Always save to a temp copy — never open the original file in a second process
+            // Save current state to disk, then copy to temp to avoid file lock conflict.
+            // db.Save() preserves the original filename; db.SaveAs() would redirect
+            // the active document to the temp path and hold a lock on it.
+            if (string.IsNullOrEmpty(db.Filename))
+            {
+                Log.Error("Document has no file path — cannot export.");
+                ed.WriteMessage("\n请先保存文档.");
+                return false;
+            }
+
+            db.Save();
+            Log.Debug(string.Format("Saved to: {0}", db.Filename));
+
             var tempDwg = Path.Combine(tempDir, "_export_temp.dwg");
-            Log.Debug(string.Format("Saving document to temp copy: {0}", tempDwg));
-            try { db.SaveAs(tempDwg, DwgVersion.Current); }
+            try
+            {
+                File.Copy(db.Filename, tempDwg, true);
+                Log.Debug(string.Format("Copied to temp: {0}", tempDwg));
+            }
             catch (System.Exception ex)
             {
-                Log.Error("SaveAs temp DWG failed.", ex);
-                ed.WriteMessage("\n无法保存文档临时副本.");
+                Log.Error("File.Copy to temp failed.", ex);
+                ed.WriteMessage("\n无法复制文档到临时目录.");
                 return false;
             }
 
