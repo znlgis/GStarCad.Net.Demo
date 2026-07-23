@@ -116,23 +116,36 @@ namespace GStarCad.Net.Demo.Commands
             Log.Debug(string.Format("Temp dir: {0}, files: 3D={1}, 2D={2}, DWG={3}",
                 tempDir, tempStep3D, tempStep2D, outputPath));
 
-            // Step 1: Export 3D solids as SAT via in-process ACISOUT, then convert to STEP
+            // Step 1: Export 3D solids via script-based ACISOUT (GStarCAD Editor.Command
+            //          can't pass _ALL selection reliably), then convert SAT→STEP.
             var stepSw = Stopwatch.StartNew();
             ed.WriteMessage("\n[1/3] 导出3D STEP...");
-            Log.Debug("Step 1: ACISOUT in-process export...");
+            Log.Debug("Step 1: ACISOUT via script...");
             try
             {
-                ed.Command("_.FILEDIA", 0);
-                // GStarCAD ACISOUT prompts: "选择对象" first, then "文件名"
-                // _ALL selects everything; ACISOUT filters non-solids automatically
-                ed.Command("_.ACISOUT", "_ALL", "", satPath.Replace('\\', '/'), "");
+                // 1a) Write and run ACISOUT script
+                var acisScript = Path.Combine(tempDir, "_acisout.scr");
+                var acisContent = string.Format(CultureInfo.InvariantCulture,
+                    "_.FILEDIA 0\n_.ACISOUT\n_ALL\n\n{0}\n",
+                    satPath.Replace('\\', '/'));
+                File.WriteAllText(acisScript, acisContent);
+                Log.Debug(string.Format("ACISOUT script: {0}", acisContent.Replace("\n", "\\n")));
+
+                ed.Command("_.SCRIPT", acisScript.Replace('\\', '/'));
+                TryDeleteFile(acisScript);
 
                 if (!File.Exists(satPath) || new FileInfo(satPath).Length < 100)
                 {
+                    // Try EXPORT STL as fallback
                     Log.Warn("ACISOUT failed, trying EXPORT STL...");
-                    ed.Command("_.FILEDIA", 0);
-                    // EXPORT prompts: "文件名" first, then "选择对象"
-                    ed.Command("_.EXPORT", stlPath.Replace('\\', '/'), "_ALL", "");
+                    var stlScript = Path.Combine(tempDir, "_stlexport.scr");
+                    var stlContent = string.Format(CultureInfo.InvariantCulture,
+                        "_.FILEDIA 0\n_.EXPORT\n{0}\n_ALL\n\n",
+                        stlPath.Replace('\\', '/'));
+                    File.WriteAllText(stlScript, stlContent);
+                    ed.Command("_.SCRIPT", stlScript.Replace('\\', '/'));
+                    TryDeleteFile(stlScript);
+
                     if (File.Exists(stlPath) && new FileInfo(stlPath).Length > 100)
                     {
                         File.Copy(stlPath, tempStep3D, true);
@@ -150,13 +163,12 @@ namespace GStarCad.Net.Demo.Commands
                 }
                 else
                 {
-                    // ACISOUT succeeded: convert SAT → STEP via script (GStarCAD can't OPEN SAT in-process)
+                    // 1b) Convert SAT → STEP via script process
                     Log.Debug("SAT export succeeded, converting to STEP...");
                     if (!ConvertSatToStepViaScript(satPath, tempStep3D, ed, tempDir))
                     {
-                        // Conversion failed, try using SAT directly with OCCTTool as fallback
-                        Log.Warn("SAT→STEP conversion failed, trying SAT as input.");
-                        TryDeleteFile(tempStep3D); // Remove expected STEP, will use SAT
+                        Log.Warn("SAT→STEP conversion failed, using SAT as input.");
+                        TryDeleteFile(tempStep3D);
                         File.Copy(satPath, tempStep3D, true);
                     }
                     TryDeleteFile(satPath);
