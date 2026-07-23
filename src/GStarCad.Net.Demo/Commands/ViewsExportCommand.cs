@@ -143,23 +143,24 @@ namespace GStarCad.Net.Demo.Commands
             var normal = viewDir.GetNormal();
             Vector3d uRef = Math.Abs(normal.X) < 0.9 ? Vector3d.XAxis : Vector3d.ZAxis;
             Vector3d u = normal.CrossProduct(uRef).GetNormal();
-            var halfSize = center.DistanceTo(maxPt) * ViewScaleFactor;
+            var halfSize = center.DistanceTo(maxPt) * ViewScaleFactor * 3;
 
-            var fromPt = center + u * halfSize;
-            var toPt = center - u * halfSize;
+            // 3-point SECTIONPLANE: p1,p2 define plane extent, p3 defines "front" viewing side.
+            var p1 = center + u * halfSize;
+            var p2 = center - u * halfSize;
+            var p3 = center + normal * halfSize;
 
-            // GStarCAD SECTIONPLANE takes 2 points (from, to) — no third point.
             var cmdPlane = string.Format(CultureInfo.InvariantCulture,
-                "SECTIONPLANE {0:F6},{1:F6},{2:F6} {3:F6},{4:F6},{5:F6} ",
-                fromPt.X, fromPt.Y, fromPt.Z,
-                toPt.X, toPt.Y, toPt.Z);
+                "SECTIONPLANE {0:F6},{1:F6},{2:F6} {3:F6},{4:F6},{5:F6} {6:F6},{7:F6},{8:F6} ",
+                p1.X, p1.Y, p1.Z,
+                p2.X, p2.Y, p2.Z,
+                p3.X, p3.Y, p3.Z);
             comDoc.SendCommand(cmdPlane);
             Thread.Sleep(500);
             comDoc.SendCommand("REGEN ");
             Thread.Sleep(300);
 
             // Use COM to get the section plane handle, then select by handle.
-            // _L is unreliable due to COM SendCommand async ordering.
             var sectionHandle = GetLastEntityHandle(comDoc);
             var cmdBlock = string.Format(CultureInfo.InvariantCulture,
                 "SECTIONPLANETOBLOCK (handent \"{0}\") {1:F6},{2:F6},0 1 1 0 ",
