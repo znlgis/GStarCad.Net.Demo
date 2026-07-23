@@ -4,12 +4,14 @@ using GrxCAD.EditorInput;
 using GrxCAD.Geometry;
 using GrxCAD.Runtime;
 using System;
+using System.Globalization;
 using System.IO;
 
 namespace GStarCad.Net.Demo.Commands
 {
     public class ViewsExportCommand
     {
+        private const double ViewScaleFactor = 1.5;
         [CommandMethod("VIEWEXPORT")]
         public void ViewsExport()
         {
@@ -131,7 +133,7 @@ namespace GStarCad.Net.Demo.Commands
 
             Vector3d uRef = Math.Abs(normal.X) < 0.9 ? Vector3d.XAxis : Vector3d.ZAxis;
             Vector3d u = normal.CrossProduct(uRef).GetNormal();
-            var halfSize = center.DistanceTo(maxPt) * 1.5;
+            var halfSize = center.DistanceTo(maxPt) * ViewScaleFactor;
 
             var fromPt = center + u * halfSize;
             var toPt = center - u * halfSize;
@@ -142,6 +144,10 @@ namespace GStarCad.Net.Demo.Commands
             double[] viewArr = { viewSide.X, viewSide.Y, viewSide.Z };
 
             dynamic section = comDoc.ModelSpace.AddSection(fromArr, toArr, viewArr);
+            if (section == null)
+            {
+                throw new InvalidOperationException("COM AddSection returned null.");
+            }
 
             try
             {
@@ -149,6 +155,7 @@ namespace GStarCad.Net.Demo.Commands
             }
             catch
             {
+                // COM Enabled property may not be supported on all versions; non-fatal.
             }
 
             section.GenerateSectionGeometry(0);
@@ -160,13 +167,14 @@ namespace GStarCad.Net.Demo.Commands
             var normal = dir.GetNormal();
             Vector3d uRef = Math.Abs(normal.X) < 0.9 ? Vector3d.XAxis : Vector3d.ZAxis;
             Vector3d u = normal.CrossProduct(uRef).GetNormal();
-            var halfSize = center.DistanceTo(maxPt) * 1.5;
+            var halfSize = center.DistanceTo(maxPt) * ViewScaleFactor;
 
             var fromPt = center + u * halfSize;
             var toPt = center - u * halfSize;
             var viewSide = center + normal * halfSize;
 
-            var cmd = string.Format("SECTIONPLANE {0},{1},{2} {3},{4},{5} {6},{7},{8} ",
+            var cmd = string.Format(CultureInfo.InvariantCulture,
+                "SECTIONPLANE {0:F6},{1:F6},{2:F6} {3:F6},{4:F6},{5:F6} {6:F6},{7:F6},{8:F6} ",
                 fromPt.X, fromPt.Y, fromPt.Z,
                 toPt.X, toPt.Y, toPt.Z,
                 viewSide.X, viewSide.Y, viewSide.Z);
