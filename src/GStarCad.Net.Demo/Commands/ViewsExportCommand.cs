@@ -115,13 +115,13 @@ namespace GStarCad.Net.Demo.Commands
 
             dynamic comDoc = doc.AcadDocument;
 
-            // Step 1: Export selected 3D solids to STEP via COM (Previous selection, no HandleToObject)
+            // Step 1: Export selected 3D solids to STEP via COM crossing window
             var stepSw = Stopwatch.StartNew();
             ed.WriteMessage("\n[1/3] 导出3D STEP...");
-            Log.Debug("Step 1: Exporting 3D STEP via COM Previous selection...");
+            Log.Debug("Step 1: Exporting 3D STEP via COM crossing window...");
             try
             {
-                if (!ExportToStep(comDoc, tempStep3D, ed))
+                if (!ExportToStep(comDoc, tempStep3D, minPt.Value, maxPt.Value, ed))
                 {
                     stepSw.Stop();
                     Log.Error(string.Format("Step 1 failed after {0}ms", stepSw.ElapsedMilliseconds));
@@ -210,48 +210,49 @@ namespace GStarCad.Net.Demo.Commands
                 "\n视图导出完成. 输出文件: {0}", outputPath));
         }
 
-        private bool ExportToStep(dynamic comDoc, string stepPath, Editor ed)
+        private bool ExportToStep(dynamic comDoc, string stepPath, Point3d minPt, Point3d maxPt, Editor ed)
         {
-            Log.Debug(string.Format("ExportToStep (COM Previous): => {0}", stepPath));
+            Log.Debug(string.Format("ExportToStep (crossing window): {0}, min={1}, max={2}", stepPath, minPt, maxPt));
 
-            // acSelectionSetPrevious = 2 in AutoCAD COM enum
-            // This picks up entities from the last ed.GetSelection() call — no HandleToObject needed
-            const int acSelectionSetPrevious = 2;
-            const int maxRetries = 2;
+            const int acSelectionSetCrossing = 1;
+            var expand = Math.Max(
+                Math.Max(maxPt.X - minPt.X, maxPt.Y - minPt.Y),
+                maxPt.Z - minPt.Z) * 0.1;
+            if (expand < 1.0) expand = 1.0;
 
-            for (int attempt = 0; attempt < maxRetries; attempt++)
+            for (int attempt = 0; attempt < 3; attempt++)
             {
-                Log.Debug(string.Format("ExportToStep attempt {0}/{1}", attempt + 1, maxRetries));
+                Log.Debug(string.Format("ExportToStep attempt {0}/3", attempt + 1));
                 try
                 {
                     dynamic ss = null;
                     try
                     {
-                        ss = comDoc.SelectionSets.Item("OCCT_SS");
+                        ss = comDoc.SelectionSets.Item("OCCT_XW");
                         ss.Delete();
-                        Log.Debug("Deleted existing OCCT_SS selection set.");
                     }
-                    catch
-                    {
-                        Log.Debug("No existing OCCT_SS to delete.");
-                    }
+                    catch { /* may not exist */ }
 
-                    Log.Debug("Creating COM SelectionSet 'OCCT_SS'...");
-                    ss = comDoc.SelectionSets.Add("OCCT_SS");
+                    ss = comDoc.SelectionSets.Add("OCCT_XW");
+                    Log.Debug("Created COM SelectionSet 'OCCT_XW'.");
 
-                    Log.Debug("Selecting entities via acSelectionSetPrevious...");
-                    ss.Select(acSelectionSetPrevious, null, null, null, null);
-                    Log.Debug(string.Format("SelectionSet count: {0}", ss.Count));
+                    var filterType = new short[] { 0 };
+                    var filterData = new object[] { "3DSOLID" };
+                    var pt1 = new double[] { minPt.X - expand, minPt.Y - expand, minPt.Z - expand };
+                    var pt2 = new double[] { maxPt.X + expand, maxPt.Y + expand, maxPt.Z + expand };
+
+                    ss.Select(acSelectionSetCrossing, pt1, pt2, filterType, filterData);
+                    Log.Debug(string.Format("Crossing window: Count={0}", ss.Count));
 
                     if (ss.Count == 0)
                     {
-                        Log.Warn("SelectionSet is empty after Select(Previous).");
+                        ed.WriteMessage("\n包围盒窗口内未找到3DSOLID.");
+                        Log.Warn("Crossing window returned 0 entities.");
                         ss.Delete();
-                        if (attempt < maxRetries - 1) continue;
-                        return false;
+                        continue;
                     }
 
-                    Log.Debug(string.Format("Calling comDoc.Export to '{0}'...", stepPath));
+                    Log.Debug("Calling comDoc.Export(STEP)...");
                     comDoc.Export(stepPath, "STEP", ss);
                     Log.Debug("comDoc.Export returned.");
 
@@ -259,25 +260,18 @@ namespace GStarCad.Net.Demo.Commands
 
                     if (File.Exists(stepPath))
                     {
-                        Log.Debug(string.Format("ExportToStep succeeded: {0} ({1} bytes)",
-                            stepPath, new FileInfo(stepPath).Length));
+                        Log.Debug(string.Format("ExportToStep success ({0} bytes).", new FileInfo(stepPath).Length));
                         return true;
                     }
-                    Log.Warn("COM Export returned but no output file found.");
+                    Log.Warn("Export returned but no file on disk.");
                 }
                 catch (System.Exception ex)
                 {
-                    Log.Error(string.Format("ExportToStep attempt {0} failed: {1}", attempt + 1, ex.Message));
-                    if (attempt < maxRetries - 1)
-                    {
-                        Log.Debug("Retrying...");
-                        System.Threading.Thread.Sleep(300);
-                        continue;
-                    }
+                    Log.Error(string.Format("ExportToStep attempt {0} failed: {1}", attempt + 1, ex.Message), ex);
+                    ed.WriteMessage(string.Format("\nCOM Export异常: {0}", ex.Message));
                 }
             }
 
-            Log.Error("ExportToStep failed: all attempts exhausted.");
             return false;
         }
 
