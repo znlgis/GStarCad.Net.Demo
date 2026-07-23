@@ -74,47 +74,58 @@ namespace GStarCad.Net.Demo.Commands
                 (minPt.Value.Y + maxPt.Value.Y) / 2.0,
                 (minPt.Value.Z + maxPt.Value.Z) / 2.0);
 
-            var views = new[]
+            // Suppress FLATSHOT dialog
+            Application.SetSystemVariable("CMDDIA", 0);
+            Application.SetSystemVariable("FILEDIA", 0);
+            try
             {
-                new { Name = "前视图", Dir = new Vector3d(0,  1, 0) },
-                new { Name = "后视图", Dir = new Vector3d(0, -1, 0) },
-                new { Name = "左视图", Dir = new Vector3d(1,  0, 0) },
-                new { Name = "右视图", Dir = new Vector3d(-1, 0, 0) },
-            };
-
-            foreach (var view in views)
-            {
-                try
+                var views = new[]
                 {
-                    SetViewAndFlatshot(doc, ed, center, view.Dir);
-                    ed.WriteMessage(string.Format("\n{0} — 生成成功.", view.Name));
-                }
-                catch (System.Exception ex)
+                    new { Name = "前视图", Dir = new Vector3d(0,  1, 0) },
+                    new { Name = "后视图", Dir = new Vector3d(0, -1, 0) },
+                    new { Name = "左视图", Dir = new Vector3d(1,  0, 0) },
+                    new { Name = "右视图", Dir = new Vector3d(-1, 0, 0) },
+                };
+
+                foreach (var view in views)
                 {
-                    ed.WriteMessage(string.Format("\n{0} — 失败: {1}", view.Name, ex.Message));
+                    try
+                    {
+                        SetViewAndFlatshot(doc, ed, center, view.Dir);
+                        ed.WriteMessage(string.Format("\n{0} — 生成成功.", view.Name));
+                    }
+                    catch (System.Exception ex)
+                    {
+                        ed.WriteMessage(string.Format("\n{0} — 失败: {1}", view.Name, ex.Message));
+                    }
                 }
-            }
 
-            var assemblyDir = Path.GetDirectoryName(
-                System.Reflection.Assembly.GetExecutingAssembly().Location);
-            var tempDir = Path.Combine(assemblyDir, "temp");
-            if (!Directory.Exists(tempDir))
+                var assemblyDir = Path.GetDirectoryName(
+                    System.Reflection.Assembly.GetExecutingAssembly().Location);
+                var tempDir = Path.Combine(assemblyDir, "temp");
+                if (!Directory.Exists(tempDir))
+                {
+                    Directory.CreateDirectory(tempDir);
+                }
+
+                var originalName = Path.GetFileNameWithoutExtension(db.Filename);
+                if (string.IsNullOrEmpty(originalName))
+                {
+                    originalName = "untitled";
+                }
+                var timestamp = DateTime.Now.ToString("yyyyMMddHHmmss");
+                var outputPath = Path.Combine(tempDir,
+                    string.Format("{0}_{1}_views.dwg", originalName, timestamp));
+
+                db.SaveAs(outputPath, DwgVersion.Current);
+
+                ed.WriteMessage(string.Format("\n视图导出完成. 输出文件: {0}", outputPath));
+            }
+            finally
             {
-                Directory.CreateDirectory(tempDir);
+                Application.SetSystemVariable("CMDDIA", 1);
+                Application.SetSystemVariable("FILEDIA", 1);
             }
-
-            var originalName = Path.GetFileNameWithoutExtension(db.Filename);
-            if (string.IsNullOrEmpty(originalName))
-            {
-                originalName = "untitled";
-            }
-            var timestamp = DateTime.Now.ToString("yyyyMMddHHmmss");
-            var outputPath = Path.Combine(tempDir,
-                string.Format("{0}_{1}_views.dwg", originalName, timestamp));
-
-            db.SaveAs(outputPath, DwgVersion.Current);
-
-            ed.WriteMessage(string.Format("\n视图导出完成. 输出文件: {0}", outputPath));
         }
 
         private void SetViewAndFlatshot(Document doc, Editor ed, Point3d center, Vector3d dir)
