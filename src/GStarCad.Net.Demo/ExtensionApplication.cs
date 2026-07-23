@@ -13,17 +13,27 @@ namespace GStarCad.Net.Demo
 
         public void Initialize()
         {
-            var configPath = Path.Combine(
-                Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location),
-                "log4net.config");
-            if (File.Exists(configPath))
+            try
             {
-                XmlConfigurator.Configure(new FileInfo(configPath));
+                var pluginDir = Path.GetDirectoryName(
+                    Assembly.GetExecutingAssembly().Location);
+                var logDir = Path.Combine(pluginDir, "logs");
+                Directory.CreateDirectory(logDir);
+
+                log4net.GlobalContext.Properties["LogPath"] = pluginDir;
+
+                var configPath = Path.Combine(pluginDir, "log4net.config");
+                if (File.Exists(configPath))
+                {
+                    XmlConfigurator.Configure(new FileInfo(configPath));
+                }
+                else
+                {
+                    BasicConfigurator.Configure();
+                }
             }
-            else
-            {
-                BasicConfigurator.Configure();
-            }
+            catch { /* don't let logging init crash the plugin */ }
+
             Log.Info("=== GStarCad.Net.Demo plugin initialized ===");
         }
 
