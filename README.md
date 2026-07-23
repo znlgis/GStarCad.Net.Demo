@@ -28,9 +28,10 @@ GStarCad.Net.Demo/
 ├── src/
 │   └── GStarCad.Net.Demo/
 │       ├── Commands/
-│       │   ├── DrawEntityCommand.cs     # 绘图命令
-│       │   ├── HelloWorldCommand.cs     # 入门命令
-│       │   └── ModifyEntityCommand.cs   # 修改实体命令
+│   │   ├── DrawEntityCommand.cs     # 绘图命令
+│   │   ├── HelloWorldCommand.cs     # 入门命令
+│   │   ├── ModifyEntityCommand.cs   # 修改实体命令
+│   │   └── ViewsExportCommand.cs    # 三维视图导出命令
 │       ├── Properties/
 │       │   └── launchSettings.json      # VS 调试启动配置
 │       ├── ExtensionApplication.cs      # 插件入口点
@@ -43,7 +44,7 @@ GStarCad.Net.Demo/
 
 ## 演示命令
 
-插件注册了三个 `CommandMethod`，在浩辰 CAD 命令行输入对应命令即可执行。
+插件注册了四个 `CommandMethod`，在浩辰 CAD 命令行输入对应命令即可执行。
 
 ### HELLO -- 入门命令
 
@@ -83,6 +84,21 @@ GStarCad.Net.Demo/
 - 提示用户拾取一个实体
 - 将实体颜色设为红色（ColorIndex = 1）
 - 将实体图层设为 "0"
+
+### VIEWEXPORT -- 三维视图导出命令
+
+选择 3D 实体，生成前/后/左/右四个正交方向的 2D 平面投影，保存为 DWG 文件。
+
+```
+命令: VIEWEXPORT
+选择对象:   (选择 3DSOLID 实体，支持多选)
+```
+
+功能：
+- 交互式多选 3D 实体（3DSOLID）
+- 使用 COM Section API 生成四个正交方向的 2D 投影（前/后/左/右）
+- 输出到 `temp\{原文件名}_{时间戳}_views.dwg`
+- 若 COM API 不可用，自动回退到 `SECTIONPLANE` 原生命令
 
 ## 快速开始
 
@@ -128,7 +144,7 @@ dotnet build src/GStarCad.Net.Demo/GStarCad.Net.Demo.csproj -c Debug
 
 ### 4. 测试命令
 
-加载成功后，在命令行依次输入 `HELLO`、`DRAWDEMO`、`MODIFYDEMO` 体验各命令功能。
+加载成功后，在命令行依次输入 `HELLO`、`DRAWDEMO`、`MODIFYDEMO`、`VIEWEXPORT` 体验各命令功能。
 
 ## 调试
 
