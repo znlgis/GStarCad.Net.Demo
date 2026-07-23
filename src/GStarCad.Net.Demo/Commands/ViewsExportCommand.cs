@@ -76,9 +76,9 @@ namespace GStarCad.Net.Demo.Commands
 
             var views = new[]
             {
-                new { Name = "前视图", Dir = new Vector3d(0, 1, 0) },
+                new { Name = "前视图", Dir = new Vector3d(0,  1, 0) },
                 new { Name = "后视图", Dir = new Vector3d(0, -1, 0) },
-                new { Name = "左视图", Dir = new Vector3d(1, 0, 0) },
+                new { Name = "左视图", Dir = new Vector3d(1,  0, 0) },
                 new { Name = "右视图", Dir = new Vector3d(-1, 0, 0) },
             };
 
@@ -86,7 +86,7 @@ namespace GStarCad.Net.Demo.Commands
             {
                 try
                 {
-                    Generate2DProjection(doc, center, view.Dir, minPt.Value, maxPt.Value);
+                    SetViewAndFlatshot(doc, ed, center, view.Dir);
                     ed.WriteMessage(string.Format("\n{0} — 生成成功.", view.Name));
                 }
                 catch (System.Exception ex)
@@ -117,31 +117,21 @@ namespace GStarCad.Net.Demo.Commands
             ed.WriteMessage(string.Format("\n视图导出完成. 输出文件: {0}", outputPath));
         }
 
-        private void Generate2DProjection(Document doc, Point3d center, Vector3d viewDir,
-            Point3d minPt, Point3d maxPt)
+        private void SetViewAndFlatshot(Document doc, Editor ed, Point3d center, Vector3d dir)
         {
-            var normal = viewDir.GetNormal();
-            Vector3d uRef = Math.Abs(normal.X) < 0.9 ? Vector3d.XAxis : Vector3d.ZAxis;
-            Vector3d u = normal.CrossProduct(uRef).GetNormal();
-            var halfSize = center.DistanceTo(maxPt) * ViewScaleFactor;
+            // 1. Set camera to orthographic view direction
+            var view = new ViewTableRecord();
+            view.ViewDirection = dir;
+            view.Target = center;
+            view.CenterPoint = new Point2d(0, 0);
+            view.Height = 200;
+            view.Width = 200;
+            ed.SetCurrentView(view);
 
-            var fromPt = center + u * halfSize;
-            var toPt = center - u * halfSize;
-            var viewSide = center + normal * halfSize;
-
-            var cmd = string.Format(CultureInfo.InvariantCulture,
-                "SECTIONPLANE {0:F6},{1:F6},{2:F6} {3:F6},{4:F6},{5:F6} {6:F6},{7:F6},{8:F6} ",
-                fromPt.X, fromPt.Y, fromPt.Z,
-                toPt.X, toPt.Y, toPt.Z,
-                viewSide.X, viewSide.Y, viewSide.Z);
-
-            // Step 1: create section plane at the computed position
-            doc.SendStringToExecute(cmd, true, false, false);
-
-            // Step 2: convert the last-created section plane to 2D block
-            // _L selects the last entity (the section plane just created)
-            // _N creates a new block; accepts defaults for remaining prompts
-            doc.SendStringToExecute("SECTIONPLANETOBLOCK _L _N 0,0,0 1 1 0 ", true, false, false);
+            // 2. Run FLATSHOT to generate 2D projection from the current view.
+            // FLATSHOT captures the current viewport's display and flattens it to 2D.
+            doc.SendStringToExecute(
+                "FLATSHOT ", true, false, false);
         }
     }
 }
