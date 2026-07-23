@@ -116,8 +116,12 @@ namespace GStarCad.Net.Demo.Commands
             {
                 try
                 {
-                    SetOrthographicView(ed, center, view.Dir, extent);
-                    Thread.Sleep(200);
+                    // Use VPOINT to set orthographic view direction reliably.
+                    var vpCmd = string.Format(CultureInfo.InvariantCulture,
+                        "VPOINT {0:F6},{1:F6},{2:F6} ",
+                        view.Dir.X, view.Dir.Y, view.Dir.Z);
+                    comDoc.SendCommand(vpCmd);
+                    Thread.Sleep(300);
 
                     var cmdFlat = string.Format(CultureInfo.InvariantCulture,
                         "FLATSHOT {0:F6},{1:F6},0 1 1 0 ",
@@ -146,16 +150,5 @@ namespace GStarCad.Net.Demo.Commands
                 "\nFLATEXPORT 完成 ({0}/4). 输出文件: {1}", successCount, outputPath));
         }
 
-        private void SetOrthographicView(Editor ed, Point3d target,
-            Vector3d viewDir, double extent)
-        {
-            var viewRec = new ViewTableRecord();
-            viewRec.Target = target;
-            viewRec.ViewDirection = viewDir;
-            viewRec.Height = extent;
-            viewRec.Width = extent;
-            viewRec.CenterPoint = new Point2d(0, 0);
-            ed.SetCurrentView(viewRec);
-        }
     }
 }
