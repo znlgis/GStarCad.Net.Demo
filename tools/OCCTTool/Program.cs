@@ -1,6 +1,5 @@
 using System;
 using System.IO;
-using System.Reflection;
 
 namespace OCCTTool
 {
@@ -11,7 +10,8 @@ namespace OCCTTool
         {
             if (args.Length < 2)
             {
-                Console.Error.WriteLine("Usage: OCCTTool.exe <input.step> <output.step>");
+                Console.Error.WriteLine("Usage: OCCTTool.exe <input.stl> <output.csv>");
+                Console.Error.WriteLine("   or: OCCTTool.exe <input.stp> <output.stp>  (legacy STEP mode)");
                 return 1;
             }
 
@@ -37,7 +37,21 @@ namespace OCCTTool
             try
             {
                 var proxy = new OCCTProxy();
-                var result = proxy.Generate2DViews(inputFile, outputFile);
+
+                var ext = Path.GetExtension(inputFile).ToLowerInvariant();
+                var outExt = Path.GetExtension(outputFile).ToLowerInvariant();
+
+                bool result;
+
+                if (ext == ".stl" && outExt == ".csv")
+                {
+                    result = proxy.Generate2DViewsSTL(inputFile, outputFile);
+                }
+                else
+                {
+                    // Legacy: STEP/BREP input -> STEP output
+                    result = proxy.Generate2DViews(inputFile, outputFile);
+                }
 
                 if (result)
                 {
