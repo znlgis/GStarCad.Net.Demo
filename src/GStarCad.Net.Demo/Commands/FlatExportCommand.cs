@@ -8,9 +8,6 @@ using System.Globalization;
 using System.IO;
 using System.Threading;
 
-using Thread = System.Threading.Thread;
-using SysException = System.Exception;
-
 namespace GStarCad.Net.Demo.Commands
 {
     public class FlatExportCommand
@@ -82,10 +79,10 @@ namespace GStarCad.Net.Demo.Commands
 
             var views = new[]
             {
-                new { Name = "前视图", Dir = new Vector3d(0, -1, 0), InsX = 0.0, InsY = 0.0 },
-                new { Name = "后视图", Dir = new Vector3d(0,  1, 0), InsX = extent * 3, InsY = 0.0 },
-                new { Name = "左视图", Dir = new Vector3d(-1, 0, 0), InsX = 0.0, InsY = extent * 3 },
-                new { Name = "右视图", Dir = new Vector3d(1,  0, 0), InsX = extent * 3, InsY = extent * 3 },
+                new { Name = "前视图", Vp = new Point3d(0, -1, 0), Ins = new Point3d(0, 0, 0) },
+                new { Name = "后视图", Vp = new Point3d(0, 1, 0),  Ins = new Point3d(extent * 3, 0, 0) },
+                new { Name = "左视图", Vp = new Point3d(-1, 0, 0), Ins = new Point3d(0, extent * 3, 0) },
+                new { Name = "右视图", Vp = new Point3d(1, 0, 0),  Ins = new Point3d(extent * 3, extent * 3, 0) },
             };
 
             var assemblyDir = Path.GetDirectoryName(
@@ -107,31 +104,25 @@ namespace GStarCad.Net.Demo.Commands
 
             try { Application.SetSystemVariable("CMDDIA", 0); } catch { }
             try { Application.SetSystemVariable("FILEDIA", 0); } catch { }
-            try { Application.SetSystemVariable("ATTDIA", 0); } catch { }
 
-            dynamic comDoc = doc.AcadDocument;
             int successCount = 0;
 
             foreach (var view in views)
             {
                 try
                 {
-                    // Use VPOINT to set orthographic view direction reliably.
-                    var vpCmd = string.Format(CultureInfo.InvariantCulture,
-                        "VPOINT {0:F6},{1:F6},{2:F6} ",
-                        view.Dir.X, view.Dir.Y, view.Dir.Z);
-                    comDoc.SendCommand(vpCmd);
-                    Thread.Sleep(300);
+                    var vp = view.Vp;
+                    var ins = view.Ins;
 
-                    var cmdFlat = string.Format(CultureInfo.InvariantCulture,
-                        "FLATSHOT {0:F6},{1:F6},0 1 1 0 ",
-                        view.InsX, view.InsY);
-                    comDoc.SendCommand(cmdFlat);
+                    ed.Command("VPOINT", vp);
+                    Thread.Sleep(200);
 
-                    ed.WriteMessage(string.Format("\n{0} — FLATSHOT 已发送.", view.Name));
+                    ed.Command("FLATSHOT", ins, 1.0, 1.0, 0.0);
+
+                    ed.WriteMessage(string.Format("\n{0} — FLATSHOT 完成.", view.Name));
                     successCount++;
                 }
-                catch (SysException ex)
+                catch (System.Exception ex)
                 {
                     ed.WriteMessage(string.Format(
                         "\n{0} — 失败: {1}", view.Name, ex.Message));
@@ -149,6 +140,5 @@ namespace GStarCad.Net.Demo.Commands
             ed.WriteMessage(string.Format(
                 "\nFLATEXPORT 完成 ({0}/4). 输出文件: {1}", successCount, outputPath));
         }
-
     }
 }
