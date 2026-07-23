@@ -9,6 +9,7 @@
 
   <ItemGroup>
     <PackageReference Include="GStarCad.Net" Version="20.22.0" />
+    <Reference Include="Microsoft.CSharp" />
   </ItemGroup>
 
 </Project>
