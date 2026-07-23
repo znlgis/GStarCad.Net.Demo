@@ -6,6 +6,7 @@ using GrxCAD.Runtime;
 using System;
 using System.Globalization;
 using System.IO;
+using System.Reflection;
 
 namespace GStarCad.Net.Demo.Commands
 {
@@ -158,14 +159,34 @@ namespace GStarCad.Net.Demo.Commands
                 // COM Enabled property may not be supported on all versions; non-fatal.
             }
 
-            try
-            {
-                section.GenerateSectionGeometry();
-            }
-            catch
-            {
-                section.GenerateSectionGeometry(Type.Missing);
-            }
+            object sectionObj = (object)section;
+            Type sectionType = sectionObj.GetType();
+
+            object[] args = new object[6];
+            args[0] = sectionObj;  // pEntity: section plane itself
+            args[1] = null;  // pIntersectionBoundaryObjs (ref)
+            args[2] = null;  // pIntersectionFillObjs (ref)
+            args[3] = null;  // pBackgroudnObjs (ref)
+            args[4] = null;  // pForegroudObjs (ref)
+            args[5] = null;  // pCurveTangencyObjs (ref)
+
+            ParameterModifier[] mods = new ParameterModifier[1];
+            mods[0] = new ParameterModifier(6);
+            mods[0][1] = true;
+            mods[0][2] = true;
+            mods[0][3] = true;
+            mods[0][4] = true;
+            mods[0][5] = true;
+
+            sectionType.InvokeMember(
+                "GenerateSectionGeometry",
+                BindingFlags.InvokeMethod,
+                null,
+                sectionObj,
+                args,
+                mods,
+                null,
+                null);
         }
 
         private void GenerateViewBySendCommand(Document doc, Point3d center, Vector3d dir,
