@@ -13,7 +13,7 @@ Write-Host "Configuration: $Configuration"
 Write-Host ""
 
 Write-Host "[1/2] Building..." -ForegroundColor Yellow
-dotnet build $projectDir\GStarCad.Net.Demo.csproj -c $Configuration
+dotnet build "$projectDir\GStarCad.Net.Demo.csproj" -c $Configuration
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Build failed!" -ForegroundColor Red
     exit $LASTEXITCODE

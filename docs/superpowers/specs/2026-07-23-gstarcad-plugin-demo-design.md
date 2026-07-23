@@ -62,11 +62,11 @@ A class implementing the appropriate `GStarCad.Net` extension application interf
 
 ## APIs Used (Expected)
 
-- `GStarCAD.ApplicationServices.Application` — document/editor access
-- `GStarCAD.DatabaseServices` — entity creation, transaction management
-- `GStarCAD.EditorInput` — user input (entity selection)
-- `GStarCAD.Runtime.CommandMethod` — command registration
-- `GStarCAD.Geometry` — point/vector types
+- `GrxCAD.ApplicationServices.Application` — document/editor access
+- `GrxCAD.DatabaseServices` — entity creation, transaction management
+- `GrxCAD.EditorInput` — user input (entity selection)
+- `GrxCAD.Runtime.CommandMethod` — command registration
+- `GrxCAD.Geometry` — point/vector types
 
 ## Error Handling
 

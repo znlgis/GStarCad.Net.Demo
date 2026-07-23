@@ -28,7 +28,7 @@
                 "build.ps1"
             ],
             "problemMatcher": [],
-            "dependsOn": []
+            "dependsOn": ["build"]
         }
     ]
 }
