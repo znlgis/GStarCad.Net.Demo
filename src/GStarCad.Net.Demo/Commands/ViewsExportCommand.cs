@@ -123,13 +123,16 @@ namespace GStarCad.Net.Demo.Commands
             try
             {
                 ed.Command("_.FILEDIA", 0);
-                ed.SetImpliedSelection(objIds);
-                ed.Command("_.ACISOUT", satPath, "");
+                // GStarCAD ACISOUT prompts: "选择对象" first, then "文件名"
+                // _ALL selects everything; ACISOUT filters non-solids automatically
+                ed.Command("_.ACISOUT", "_ALL", "", satPath.Replace('\\', '/'), "");
 
                 if (!File.Exists(satPath) || new FileInfo(satPath).Length < 100)
                 {
                     Log.Warn("ACISOUT failed, trying EXPORT STL...");
-                    ed.Command("_.EXPORT", stlPath);
+                    ed.Command("_.FILEDIA", 0);
+                    // EXPORT prompts: "文件名" first, then "选择对象"
+                    ed.Command("_.EXPORT", stlPath.Replace('\\', '/'), "_ALL", "");
                     if (File.Exists(stlPath) && new FileInfo(stlPath).Length > 100)
                     {
                         File.Copy(stlPath, tempStep3D, true);
@@ -149,8 +152,8 @@ namespace GStarCad.Net.Demo.Commands
                 {
                     // ACISOUT succeeded: SAT → STEP conversion
                     ed.Command("_.FILEDIA", 0);
-                    ed.Command("_.OPEN", satPath);
-                    ed.Command("_.SAVEAS", 2018, tempStep3D);
+                    ed.Command("_.OPEN", satPath.Replace('\\', '/'));
+                    ed.Command("_.SAVEAS", 2018, tempStep3D.Replace('\\', '/'));
                     ed.Command("_.CLOSE");
                     TryDeleteFile(satPath);
                     Log.Debug("SAT→STEP conversion complete.");
