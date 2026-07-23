@@ -1,3 +1,39 @@
+# Task 2: OrthoProjector — 正交投影引擎
+
+**Files:**
+- Create: `src/GStarCad.Net.Demo/Common/OrthoProjector.cs`
+
+**Interfaces:**
+- Consumes: `StlTriangle` (from Task 1), `Point3d`, `Vector3d`, `Point2d` (from GrxCAD.Geometry)
+- Produces: `ProjectedEdge` struct, `ViewProjection` class, `OrthoProjector.Project(List<StlTriangle>)` → `List<ViewProjection>`
+
+The StlTriangle struct is in `src/GStarCad.Net.Demo/Common/StlParser.cs`:
+```csharp
+public struct StlTriangle {
+    public Vector3d Normal;
+    public Point3d V1, V2, V3;
+    public Point3d this[int index] { get; }
+}
+```
+
+## Algorithm Summary
+
+For each of 4 orthographic views (Front, Back, Left, Right):
+1. Back-face culling: skip triangles whose normal faces away from camera
+2. Edge collection: for each front-facing triangle, project its 3 edges to 2D, deduplicate by a canonical edge key
+3. Silhouette detection: edges bordering a back-face triangle are always visible
+4. Interior edge occlusion: for all-front-face edges, check if midpoint is covered by a closer triangle (barycentric point-in-triangle)
+5. Output visible edges and hidden (dashed) edges
+
+View definitions:
+- Front: cameraDir=(0,1,0), DropAxis=Y, KeepH=X, KeepV=Z
+- Back: cameraDir=(0,-1,0), DropAxis=Y, KeepH=X, KeepV=Z
+- Left: cameraDir=(-1,0,0), DropAxis=X, KeepH=Y, KeepV=Z
+- Right: cameraDir=(1,0,0), DropAxis=X, KeepH=Y, KeepV=Z
+
+## Complete Implementation Code
+
+```csharp
 using System;
 using System.Collections.Generic;
 using GrxCAD.Geometry;
@@ -133,9 +169,7 @@ namespace GStarCad.Net.Demo.Common
                 else
                 {
                     // Interior edge (all front-facing) — check occlusion
-                    var edgeTriIndices = new HashSet<int>();
-                    foreach (var r in refs) edgeTriIndices.Add(r.TriIndex);
-                    var visible = !IsOccluded(a, b, triangles, triFlags, view, edgeTriIndices);
+                    var visible = !IsOccluded(a, b, triangles, triFlags, view);
                     if (visible)
                         edges.Add(new ProjectedEdge(a, b, true));
                     else
@@ -147,8 +181,7 @@ namespace GStarCad.Net.Demo.Common
         }
 
         private static bool IsOccluded(Point2d edgeA, Point2d edgeB,
-            List<StlTriangle> triangles, bool[] triFlags, ViewDef view,
-            HashSet<int> edgeTriangleIndices)
+            List<StlTriangle> triangles, bool[] triFlags, ViewDef view)
         {
             // Check midpoint + quarter-points against closer triangles
             var mid = new Point2d(
@@ -170,10 +203,9 @@ namespace GStarCad.Net.Demo.Common
 
             foreach (var cp in checkPoints)
             {
-                // Check if any closer triangle covers this 2D point
+                // Check if any CLOSER triangle covers this 2D point
                 foreach (var entry in depthList)
                 {
-                    if (edgeTriangleIndices.Contains(entry.TriIndex)) continue;
                     var tri = triangles[entry.TriIndex];
                     var t2d = new Point2d[3]
                     {
@@ -279,3 +311,17 @@ namespace GStarCad.Net.Demo.Common
         }
     }
 }
+```
+
+## Build Verification
+
+```
+dotnet build src/GStarCad.Net.Demo/GStarCad.Net.Demo.csproj
+```
+
+## Global Constraints
+- 目标框架：.NET Framework 4.8
+- NuGet 依赖：仅 GStarCad.Net 20.22.0 + log4net 3.3.2
+- 命名空间：GrxCAD.* (Runtime, ApplicationServices, DatabaseServices, EditorInput, Geometry)
+- 无 AI 注释、无 emoji、无 catch-all 文件
+- 使用 GrxCAD.Geometry 的 Vector3d / Point3d / Point2d 类型

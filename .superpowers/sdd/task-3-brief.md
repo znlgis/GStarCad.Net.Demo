@@ -1,5 +1,33 @@
+# Task 3: ViewArranger — 2×2 网格 DWG 构建
+
+**Files:**
+- Create: `src/GStarCad.Net.Demo/Common/ViewArranger.cs`
+
+**Interfaces:**
+- Consumes: `ViewProjection`, `ProjectedEdge`, `Point2d`, `Point3d` (from GrxCAD.Geometry + Task 2 OrthoProjector)
+- Produces: `ViewArranger.ArrangeAndSave(List<ViewProjection>, string outputPath)`
+
+The types from Task 2 (OrthoProjector.cs, same namespace GStarCad.Net.Demo.Common):
+```csharp
+public struct ProjectedEdge {
+    public Point2d Start;
+    public Point2d End;
+    public bool IsVisible;
+    public ProjectedEdge(Point2d start, Point2d end, bool isVisible);
+}
+
+public class ViewProjection {
+    public string Name;         // "Front", "Back", "Left", "Right"
+    public List<ProjectedEdge> Edges;
+}
+```
+
+## Complete Implementation Code
+
+```csharp
 using System;
 using System.Collections.Generic;
+using System.IO;
 using GrxCAD.DatabaseServices;
 using GrxCAD.Geometry;
 
@@ -24,8 +52,8 @@ namespace GStarCad.Net.Demo.Common
                     tr.Commit();
                 }
 
-                // Compute 2x2 grid offsets and center views in cells
-                CalculateGridOffsets(projections);
+                // Compute 2x2 grid offsets
+                var gridLayout = CalculateGridOffsets(projections);
 
                 using (var tr = db.TransactionManager.StartTransaction())
                 {
@@ -43,15 +71,20 @@ namespace GStarCad.Net.Demo.Common
 
                     foreach (var proj in projections)
                     {
-                        if (!gridIndex.ContainsKey(proj.Name)) continue;
+                        if (!gridIndex.TryGetValue(proj.Name, out var idx)) continue;
+
+                        var col = idx % 2;
+                        var row = idx / 2;
+                        var offsetX = col * gridLayout.GridWidth;
+                        var offsetY = row * gridLayout.GridHeight;
 
                         foreach (var edge in proj.Edges)
                         {
                             var layerId = edge.IsVisible ? visibleLayer : hiddenLayer;
 
                             var line = new Line(
-                                new Point3d(edge.Start.X, edge.Start.Y, 0),
-                                new Point3d(edge.End.X, edge.End.Y, 0));
+                                new Point3d(edge.Start.X + offsetX, edge.Start.Y + offsetY, 0),
+                                new Point3d(edge.End.X + offsetX, edge.End.Y + offsetY, 0));
 
                             line.LayerId = layerId;
                             btr.AppendEntity(line);
@@ -164,3 +197,17 @@ namespace GStarCad.Net.Demo.Common
         }
     }
 }
+```
+
+## Build Verification
+
+```
+dotnet build src/GStarCad.Net.Demo/GStarCad.Net.Demo.csproj
+```
+
+## Global Constraints
+- 目标框架：.NET Framework 4.8
+- NuGet 依赖：仅 GStarCad.Net 20.22.0 + log4net 3.3.2
+- 命名空间：GrxCAD.* (Runtime, ApplicationServices, DatabaseServices, EditorInput, Geometry)
+- 无 AI 注释、无 emoji、无 catch-all 文件
+- 使用 GrxCAD.DatabaseServices 的 Database, Transaction, BlockTable, BlockTableRecord, LayerTable, LayerTableRecord, LinetypeTable, Line

@@ -1,3 +1,21 @@
+# Task 4: MeshViewExportCommand — MESHVIEWEXPORT 命令
+
+**Files:**
+- Create: `src/GStarCad.Net.Demo/Commands/MeshViewExportCommand.cs`
+
+**Interfaces:**
+- Consumes: StlParser (Task 1), OrthoProjector (Task 2), ViewArranger (Task 3) — all in namespace `GStarCad.Net.Demo.Common`
+- Also: GrxCAD.ApplicationServices, GrxCAD.DatabaseServices, GrxCAD.EditorInput, GrxCAD.Geometry, GrxCAD.Runtime, log4net
+- Produces: `MESHVIEWEXPORT` command registered via `[CommandMethod("MESHVIEWEXPORT")]`
+
+**Pattern reference:** Follow the same pattern as `ViewsExportCommand.cs` in `src/GStarCad.Net.Demo/Commands/ViewsExportCommand.cs` for SendStringToExecute-based STL export and STL file polling. Key pattern:
+- `Application.SetSystemVariable("FILEDIA", 0)` before export
+- `doc.SendStringToExecute(string.Format("_.EXPORT\n{0}\n_ALL\n\n_.FILEDIA 1 ", stlPath), false, false, false)`
+- Poll for file existence with `System.Windows.Forms.Application.DoEvents()` + `Thread.Sleep(200)`
+
+## Complete Implementation Code
+
+```csharp
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -11,7 +29,6 @@ using GrxCAD.Geometry;
 using GrxCAD.Runtime;
 using GStarCad.Net.Demo.Common;
 using log4net;
-using Exception = System.Exception;
 
 namespace GStarCad.Net.Demo.Commands
 {
@@ -152,7 +169,30 @@ namespace GStarCad.Net.Demo.Commands
         private static void TryDeleteFile(string path)
         {
             try { if (File.Exists(path)) File.Delete(path); }
-            catch { /* best-effort temp file cleanup */ }
+            catch { }
         }
     }
 }
+```
+
+## Build Verification
+
+```
+dotnet build src/GStarCad.Net.Demo/GStarCad.Net.Demo.csproj
+```
+
+## Runtime Verification
+
+Run in GStarCAD 2022 with a 3D solid selected, then:
+```
+MESHVIEWEXPORT
+```
+Verify that a .dwg file is created in `temp/` directory with 4 orthographic views.
+
+## Global Constraints
+- 目标框架：.NET Framework 4.8
+- NuGet 依赖：仅 GStarCad.Net 20.22.0 + log4net 3.3.2
+- 命名空间：GrxCAD.* (Runtime, ApplicationServices, DatabaseServices, EditorInput, Geometry)
+- 现有命令 VIEWEXPORT/FLATEXPORT 保持不变
+- 无 AI 注释、无 emoji、无 catch-all 文件
+- 命令注册使用 `[CommandMethod("MESHVIEWEXPORT")]`

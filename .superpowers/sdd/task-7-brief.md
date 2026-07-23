@@ -1,3 +1,24 @@
+# Task 7: HlrExportCommand — HLREXPORT 命令
+
+**Files:**
+- Create: `src/GStarCad.Net.Demo/Commands/HlrExportCommand.cs`
+
+**Interfaces:**
+- Consumes: OCCTTool.exe (from Task 6, at `tools/OCCTTool/bin/Release/net48/`), GrxCAD.* APIs
+- Produces: `HLREXPORT` 命令
+
+## Four-step pipeline
+
+1. **STL导出** — 使用 SendStringToExecute("_.EXPORT")，与 MESHVIEWEXPORT 相同模式
+2. **OCCTTool投影** — 启动外部进程 OCCTTool.exe，输入.stl → 输出.csv
+3. **CSV解析** — 解析边坐标（格式：V|H, x1,y1,z1, x2,y2,z2）
+4. **DWG构建** — 创建 VISIBLE_EDGES/HIDDEN_EDGES 图层，写 Line 实体，保存 DWG
+
+**关于视图分组**: OCCT HLR 按 Front→Back→Left→Right 顺序输出边，但各视图边数不同。v1 简化方案：将所有边放在同一个 DWG 空间中（不拆分视图），用户可在 CAD 中自行排列。CSV 中 V=可见边(HIDDEN 图层/Hidden 线型), H=隐藏边(HIDDEN_EDGES 图层/Hidden 线型)。
+
+## Complete Implementation Code
+
+```csharp
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -11,7 +32,6 @@ using GrxCAD.EditorInput;
 using GrxCAD.Geometry;
 using GrxCAD.Runtime;
 using log4net;
-using Exception = System.Exception;
 
 namespace GStarCad.Net.Demo.Commands
 {
@@ -292,7 +312,7 @@ namespace GStarCad.Net.Demo.Commands
 
                     if (!proc.WaitForExit(ToolTimeoutMs))
                     {
-                        try { proc.Kill(); } catch { /* best-effort process termination */ }
+                        try { proc.Kill(); } catch { }
                         return -3;
                     }
 
@@ -324,7 +344,22 @@ namespace GStarCad.Net.Demo.Commands
         private static void TryDeleteFile(string path)
         {
             try { if (File.Exists(path)) File.Delete(path); }
-            catch { /* best-effort temp file cleanup */ }
+            catch { }
         }
     }
 }
+```
+
+Note: The code will need `using Exception = System.Exception;` to avoid ambiguity with `GrxCAD.Runtime.Exception`, matching the pattern used in MeshViewExportCommand.cs.
+
+## Build Verification
+
+```
+dotnet build src/GStarCad.Net.Demo/GStarCad.Net.Demo.csproj
+```
+
+## Global Constraints
+- .NET Framework 4.8, GStarCad.Net 20.22.0 + log4net 3.3.2
+- 无 AI 注释、无 emoji、无 catch-all 文件
+- 命令注册：`[CommandMethod("HLREXPORT")]`
+- 现有命令 VIEWEXPORT/FLATEXPORT/MESHVIEWEXPORT 保持不变
