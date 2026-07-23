@@ -35,6 +35,10 @@ namespace GStarCad.Net.Demo.Commands
                 return;
             }
 
+            var solidIds = new ObjectIdCollection();
+            foreach (SelectedObject selObj in selRes.Value)
+                solidIds.Add(selObj.ObjectId);
+
             Point3d? minPt = null;
             Point3d? maxPt = null;
 
@@ -81,10 +85,12 @@ namespace GStarCad.Net.Demo.Commands
 
             var views = new[]
             {
-                new { Name = "前视图", Vp = new Point3d(0, -1, 0), Ins = new Point3d(0, 0, 0) },
-                new { Name = "后视图", Vp = new Point3d(0, 1, 0), Ins = new Point3d(extent * 3, 0, 0) },
-                new { Name = "左视图", Vp = new Point3d(-1, 0, 0), Ins = new Point3d(0, extent * 3, 0) },
-                new { Name = "右视图", Vp = new Point3d(1, 0, 0), Ins = new Point3d(extent * 3, extent * 3, 0) }
+                new { Name = "俯视图", Key = "_TOP",    Ins = new Point3d(0, 0, 0) },
+                new { Name = "前视图", Key = "_FRONT",  Ins = new Point3d(extent * 3, 0, 0) },
+                new { Name = "仰视图", Key = "_BOTTOM", Ins = new Point3d(extent * 6, 0, 0) },
+                new { Name = "左视图", Key = "_LEFT",   Ins = new Point3d(0, extent * 3, 0) },
+                new { Name = "后视图", Key = "_BACK",   Ins = new Point3d(extent * 3, extent * 3, 0) },
+                new { Name = "右视图", Key = "_RIGHT",  Ins = new Point3d(extent * 6, extent * 3, 0) }
             };
 
             var assemblyDir = Path.GetDirectoryName(
@@ -119,11 +125,12 @@ namespace GStarCad.Net.Demo.Commands
             foreach (var view in views)
                 try
                 {
-                    var vp = view.Vp;
                     var ins = view.Ins;
 
-                    ed.Command("VPOINT", vp);
+                    ed.Command("-VIEW", view.Key);
                     Thread.Sleep(200);
+
+                    ed.CurrentUserCoordinateSystem = Matrix3d.Identity;
 
                     ed.Command("FLATSHOT", ins, 1.0, 1.0, 0.0);
 
@@ -142,10 +149,21 @@ namespace GStarCad.Net.Demo.Commands
                 return;
             }
 
+            using (var tr = db.TransactionManager.StartTransaction())
+            {
+                foreach (ObjectId id in solidIds)
+                {
+                    var ent = (Entity)tr.GetObject(id, OpenMode.ForWrite);
+                    ent.Erase();
+                }
+
+                tr.Commit();
+            }
+
             db.SaveAs(outputPath, DwgVersion.Current);
 
             ed.WriteMessage(string.Format(
-                "\nFLATEXPORT 完成 ({0}/4). 输出文件: {1}", successCount, outputPath));
+                "\nFLATEXPORT 完成 ({0}/6). 输出文件: {1}", successCount, outputPath));
         }
     }
 }
