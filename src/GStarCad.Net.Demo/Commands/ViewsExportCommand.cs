@@ -246,12 +246,16 @@ namespace GStarCad.Net.Demo.Commands
             // Use LISP (command "_.EXPORT") instead of _.-EXPORT because
             // GStarCAD's -EXPORT only supports dwf/dwfx/pdf. The non-dash
             // EXPORT with FILEDIA 0 detects format from file extension (.stp).
+            // Use forward slashes in LISP strings — LISP treats backslash as escape
+            var lispStepPath = stepPath.Replace('\\', '/');
+            var lispTempDwg = tempDwg.Replace('\\', '/');
+
             var script = string.Format(CultureInfo.InvariantCulture,
                 "FILEDIA 0\n_.OPEN \"{0}\"\n_.ZOOM _E\n" +
                 "(setq ss (ssget \"_X\" '((0 . \"3DSOLID\"))))\n" +
                 "(if ss (command \"_.EXPORT\" \"{1}\" ss \"\"))\n" +
                 "_.QUIT Y\n",
-                tempDwg, stepPath);
+                lispTempDwg, lispStepPath);
 
             Log.Debug(string.Format("Script: {0}", script.Replace("\n", "\\n")));
             File.WriteAllText(scriptPath, script, System.Text.Encoding.ASCII);
