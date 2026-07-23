@@ -216,36 +216,26 @@ namespace GStarCad.Net.Demo.Commands
             var gcadExe = Process.GetCurrentProcess().MainModule.FileName;
             Log.Debug(string.Format("GStarCAD exe: {0}", gcadExe));
 
-            // Save current document to temp copy to avoid file lock conflicts
-            var sourceDwg = db.Filename;
-            var tempDwg = sourceDwg;
-            if (string.IsNullOrEmpty(sourceDwg) || !File.Exists(sourceDwg))
+            // Always save to a temp copy — never open the original file in a second process
+            var tempDwg = Path.Combine(tempDir, "_export_temp.dwg");
+            Log.Debug(string.Format("Saving document to temp copy: {0}", tempDwg));
+            try { db.SaveAs(tempDwg, DwgVersion.Current); }
+            catch (System.Exception ex)
             {
-                tempDwg = Path.Combine(tempDir, "_export_temp.dwg");
-                Log.Debug(string.Format("Saving document to temp copy: {0}", tempDwg));
-                try { db.SaveAs(tempDwg, DwgVersion.Current); }
-                catch (System.Exception ex)
-                {
-                    Log.Error("SaveAs temp DWG failed.", ex);
-                    ed.WriteMessage("\n无法保存文档临时副本.");
-                    return false;
-                }
-            }
-            else
-            {
-                Log.Debug("Document already on disk, no save needed.");
+                Log.Error("SaveAs temp DWG failed.", ex);
+                ed.WriteMessage("\n无法保存文档临时副本.");
+                return false;
             }
 
             var scriptPath = Path.Combine(tempDir, "_gcad_export.scr");
+            // Use LISP (command "_.EXPORT") instead of _.-EXPORT because
+            // GStarCAD's -EXPORT only supports dwf/dwfx/pdf. The non-dash
+            // EXPORT with FILEDIA 0 detects format from file extension (.stp).
             var script = string.Format(CultureInfo.InvariantCulture,
-                // FILEDIA 0: suppress file dialogs
-                // _.OPEN: open the temp copy
-                // _.ZOOM _E: ensure all entities visible
-                // _.-EXPORT: command-line export (prompts: filename, format, selection)
-                // STEP: format keyword
-                // _X 3DSOLID: select all 3D solids via filter
-                // _.QUIT Y: quit without saving
-                "FILEDIA 0\n_.OPEN \"{0}\"\n_.ZOOM _E\n_.-EXPORT \"{1}\" STEP _X 3DSOLID \n_.QUIT Y\n",
+                "FILEDIA 0\n_.OPEN \"{0}\"\n_.ZOOM _E\n" +
+                "(setq ss (ssget \"_X\" '((0 . \"3DSOLID\"))))\n" +
+                "(if ss (command \"_.EXPORT\" \"{1}\" ss \"\"))\n" +
+                "_.QUIT Y\n",
                 tempDwg, stepPath);
 
             Log.Debug(string.Format("Script: {0}", script.Replace("\n", "\\n")));
@@ -267,6 +257,7 @@ namespace GStarCad.Net.Demo.Commands
                     {
                         Log.Error("Export script: Process.Start returned null.");
                         TryDeleteFile(scriptPath);
+                        TryDeleteFile(tempDwg);
                         return false;
                     }
 
@@ -277,6 +268,7 @@ namespace GStarCad.Net.Demo.Commands
                         ed.WriteMessage("\n3D STEP导出超时.");
                         try { proc.Kill(); } catch { }
                         TryDeleteFile(scriptPath);
+                        TryDeleteFile(tempDwg);
                         return false;
                     }
 
@@ -287,16 +279,12 @@ namespace GStarCad.Net.Demo.Commands
             {
                 Log.Error("Export script: process launch failed.", ex);
                 TryDeleteFile(scriptPath);
+                TryDeleteFile(tempDwg);
                 return false;
             }
 
             TryDeleteFile(scriptPath);
-
-            // Clean up temp DWG copy if we created one
-            if (tempDwg != sourceDwg)
-            {
-                TryDeleteFile(tempDwg);
-            }
+            TryDeleteFile(tempDwg);
 
             var result = File.Exists(stepPath);
             if (result)
