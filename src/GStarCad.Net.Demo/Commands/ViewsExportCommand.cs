@@ -220,12 +220,12 @@ namespace GStarCad.Net.Demo.Commands
             string satPath = stem + ".sat";
             string stlPath = stem + ".stl";
 
-            ed.SetImpliedSelection(objIds);
             ed.Command("_.FILEDIA", 0);
 
             // Attempt 1: ACISOUT → SAT (B-rep preferred)
             try
             {
+                ed.SetImpliedSelection(objIds);
                 ed.Command("_.ACISOUT", satPath);
                 if (File.Exists(satPath) && new FileInfo(satPath).Length > 100)
                 {
@@ -240,6 +240,7 @@ namespace GStarCad.Net.Demo.Commands
             // Attempt 2: EXPORT → STL (mesh fallback)
             try
             {
+                ed.SetImpliedSelection(objIds);
                 ed.Command("_.EXPORT", stlPath);
                 if (File.Exists(stlPath) && new FileInfo(stlPath).Length > 100)
                 {
