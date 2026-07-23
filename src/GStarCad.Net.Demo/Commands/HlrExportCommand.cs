@@ -213,17 +213,11 @@ namespace GStarCad.Net.Demo.Commands
 
         private static void ExportStl(Document doc, string stlPath)
         {
-            try
-            {
-                Application.SetSystemVariable("FILEDIA", 0);
-            }
-            catch (Exception ex)
-            {
-                Log.Warn("Failed to set FILEDIA", ex);
-            }
+            var ed = doc.Editor;
+            ed.Command("_.FILEDIA", 0);
 
             doc.SendStringToExecute(
-                string.Format("_.EXPORT\n{0}\n_ALL\n\n_.FILEDIA 1 ",
+                string.Format("_.EXPORT\n{0}\n_.FILEDIA 1 ",
                     stlPath.Replace('\\', '/')),
                 false, false, false);
         }
