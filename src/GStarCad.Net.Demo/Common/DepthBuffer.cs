@@ -13,7 +13,11 @@ namespace GStarCad.Net.Demo.Common
     /// </summary>
     internal sealed class DepthBuffer
     {
-        private const int Resolution = 900;      // cells along the larger screen dimension
+        // Grid cells along the larger screen dimension. Higher = sharper visible/hidden
+        // boundaries but more memory/time (cost grows ~O(Resolution^2)); 900 balances clean
+        // hidden-line splits against performance for typical mechanical parts.
+        private const int Resolution = 900;
+        // Smallest meaningful depth difference; guards depth comparisons against exact ties.
         private const double MinDepthGap = 1e-9;
 
         private readonly double[] _depth;        // nearest depth per cell (+inf if empty)
@@ -81,6 +85,10 @@ namespace GStarCad.Net.Demo.Common
             for (var i = 0; i < depth.Length; i++) depth[i] = double.PositiveInfinity;
 
             var range = Math.Max(maxD - minD, 1e-9);
+            // Depth tolerance so an edge lying exactly on the surface it belongs to counts as
+            // visible (avoids Z-fighting/self-occlusion). 0.1% of the model's depth range is
+            // large enough to absorb rasterization/interpolation error yet far smaller than the
+            // gap to any occluding part in front.
             var bias = range * 1e-3 + MinDepthGap;
 
             var buffer = new DepthBuffer(depth, w, h, minH, minV, cell, bias);
@@ -164,6 +172,8 @@ namespace GStarCad.Net.Demo.Common
                 (a.X - b.X) * (a.X - b.X) + (a.Y - b.Y) * (a.Y - b.Y)) / _cell;
             var samples = (int)Math.Ceiling(pixLen) + 1;
             if (samples < 2) samples = 2;
+            // Roughly one sample per pixel; cap to bound work on very long edges (extra samples
+            // beyond ~pixel resolution add cost without improving the visible/hidden split).
             if (samples > 4000) samples = 4000;
 
             var startT = 0.0;

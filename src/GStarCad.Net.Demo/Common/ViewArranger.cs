@@ -15,6 +15,7 @@ namespace GStarCad.Net.Demo.Common
     /// </summary>
     public static class ViewArranger
     {
+        // Gap (in drawing units) inserted between adjacent views in the layout.
         private const double Spacing = 30.0;
         private const string HiddenLayerName = "HIDDEN_EDGES";
         private const string VisibleLayerName = "VISIBLE_EDGES";
@@ -159,9 +160,15 @@ namespace GStarCad.Net.Demo.Common
         /// </summary>
         private static List<ProjectedEdge> MergeCollinear(List<ProjectedEdge> edges)
         {
+            // Grouping tolerances for treating segments as collinear:
+            //   angQuant — line orientation bucket (~1e-4 rad);
+            //   posQuant — perpendicular offset bucket (~1e-4 drawing units);
+            //   tol      — max endpoint gap (drawing units) that may be closed when merging
+            //              touching intervals (gaps larger than this are never bridged).
             const double angQuant = 1e-4;
             const double posQuant = 1e-4;
             const double tol = 1e-6;
+            const double nearZero = 1e-12; // treat |component| below this as vertical/degenerate
 
             var groups = new Dictionary<long, List<int>>();
             for (var i = 0; i < edges.Count; i++)
@@ -175,7 +182,7 @@ namespace GStarCad.Net.Demo.Common
                 dy /= len;
 
                 // Canonical direction (unsigned line orientation).
-                if (dx < 0 || (Math.Abs(dx) < 1e-12 && dy < 0)) { dx = -dx; dy = -dy; }
+                if (dx < 0 || (Math.Abs(dx) < nearZero && dy < 0)) { dx = -dx; dy = -dy; }
 
                 var ang = Math.Atan2(dy, dx);              // 0..pi
                 var c = -dy * e.Start.X + dx * e.Start.Y;  // signed perpendicular offset
@@ -202,7 +209,7 @@ namespace GStarCad.Net.Demo.Common
                 var flen = Math.Sqrt(fdx * fdx + fdy * fdy);
                 fdx /= flen;
                 fdy /= flen;
-                if (fdx < 0 || (Math.Abs(fdx) < 1e-12 && fdy < 0)) { fdx = -fdx; fdy = -fdy; }
+                if (fdx < 0 || (Math.Abs(fdx) < nearZero && fdy < 0)) { fdx = -fdx; fdy = -fdy; }
 
                 var refP = first.Start;
                 var visible = first.IsVisible;

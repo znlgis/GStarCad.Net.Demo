@@ -130,7 +130,7 @@ namespace GStarCad.Net.Demo.Commands
             try
             {
                 savedFacetres = Application.GetSystemVariable("FACETRES");
-                Application.SetSystemVariable("FACETRES", 10.0);
+                Application.SetSystemVariable("FACETRES", 10.0); // 10 = maximum tessellation quality
             }
             catch
             {

@@ -123,7 +123,11 @@ namespace GStarCad.Net.Demo.Common
 
     internal static class OrthoConstants
     {
-        // Kept in one place so MeshTopology and OrthoProjector agree on the sharp threshold.
+        // Dihedral angle (degrees) above which a shared edge is treated as a real feature
+        // (sharp crease) rather than smooth tessellation of a curved surface. 25° reliably
+        // keeps genuine model edges (boxes, chamfers) while discarding the many near-coplanar
+        // facet seams a curved surface (cylinder/fillet) is tessellated into. Kept in one place
+        // so MeshTopology and OrthoProjector agree on the threshold.
         public const double SharpAngleDeg = 25.0;
         public static readonly double SharpAngleRad = SharpAngleDeg * Math.PI / 180.0;
     }

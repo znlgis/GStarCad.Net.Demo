@@ -40,7 +40,10 @@ namespace GStarCad.Net.Demo.Common
     /// </summary>
     public static class OrthoProjector
     {
-        // Coordinate quantization used to weld coincident STL vertices into a shared 3D edge.
+        // Coordinate quantization (in model/drawing units) used to weld coincident STL
+        // vertices into a shared 3D edge. STL stores each triangle independently, so shared
+        // corners must be snapped together; 1e-6 is well below any real feature size while
+        // still tolerating floating-point noise from the exporter.
         private const double WeldTolerance = 1e-6;
 
         private struct ViewDef
@@ -87,7 +90,7 @@ namespace GStarCad.Net.Demo.Common
             // Classify each triangle as front-facing (its outward normal points toward the camera).
             var triFront = new bool[mesh.Triangles.Count];
             for (var i = 0; i < mesh.Triangles.Count; i++)
-                triFront[i] = mesh.Normals[i].DotProduct(look) < 0; // normal opposes look => faces camera
+                triFront[i] = mesh.Normals[i].DotProduct(look) < 0; // negative dot => normal points toward camera (opposite to look)
 
             // Collect candidate feature edges for this view.
             var candidates = new List<MeshTopology.Edge>();
