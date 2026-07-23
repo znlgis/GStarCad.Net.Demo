@@ -1,0 +1,1 @@
+(command "netload" "GStarCad.Net.Demo.dll")

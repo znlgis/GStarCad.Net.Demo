@@ -10,6 +10,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Reflection;
+using System.Text;
 
 namespace GStarCad.Net.Demo.Commands
 {
@@ -113,15 +114,13 @@ namespace GStarCad.Net.Demo.Commands
             Log.Debug(string.Format("Temp dir: {0}, files: 3D={1}, 2D={2}, DWG={3}",
                 tempDir, tempStep3D, tempStep2D, outputPath));
 
-            dynamic comDoc = doc.AcadDocument;
-
-            // Step 1: Export selected 3D solids to STEP via COM crossing window
+            // Step 1: Export selected 3D solids to STEP via isolated GStarCAD process
             var stepSw = Stopwatch.StartNew();
             ed.WriteMessage("\n[1/3] 导出3D STEP...");
-            Log.Debug("Step 1: Exporting 3D STEP via COM crossing window...");
+            Log.Debug("Step 1: Exporting 3D STEP via isolated GStarCAD script...");
             try
             {
-                if (!ExportToStep(comDoc, tempStep3D, minPt.Value, maxPt.Value, ed))
+                if (!ExportToStep(db, tempStep3D, tempDir, ed))
                 {
                     stepSw.Stop();
                     Log.Error(string.Format("Step 1 failed after {0}ms", stepSw.ElapsedMilliseconds));
@@ -210,80 +209,105 @@ namespace GStarCad.Net.Demo.Commands
                 "\n视图导出完成. 输出文件: {0}", outputPath));
         }
 
-        private bool ExportToStep(dynamic comDoc, string stepPath, Point3d minPt, Point3d maxPt, Editor ed)
+        private bool ExportToStep(Database db, string stepPath, string tempDir, Editor ed)
         {
-            Log.Debug(string.Format("ExportToStep: path={0}", stepPath));
+            Log.Debug(string.Format("ExportToStep (script): => {0}", stepPath));
 
-            const int acSelectionSetAll = 4;
+            var gcadExe = Process.GetCurrentProcess().MainModule.FileName;
+            Log.Debug(string.Format("GStarCAD exe: {0}", gcadExe));
 
-            for (int attempt = 0; attempt < 3; attempt++)
+            // Save current document to temp copy to avoid file lock conflicts
+            var sourceDwg = db.Filename;
+            var tempDwg = sourceDwg;
+            if (string.IsNullOrEmpty(sourceDwg) || !File.Exists(sourceDwg))
             {
-                Log.Debug(string.Format("ExportToStep attempt {0}/3", attempt + 1));
-                try
+                tempDwg = Path.Combine(tempDir, "_export_temp.dwg");
+                Log.Debug(string.Format("Saving document to temp copy: {0}", tempDwg));
+                try { db.SaveAs(tempDwg, DwgVersion.Current); }
+                catch (System.Exception ex)
                 {
-                    dynamic ss = null;
-                    try
-                    {
-                        ss = comDoc.SelectionSets.Item("OCCT_ALL");
-                        ss.Delete();
-                    }
-                    catch { /* may not exist */ }
+                    Log.Error("SaveAs temp DWG failed.", ex);
+                    ed.WriteMessage("\n无法保存文档临时副本.");
+                    return false;
+                }
+            }
+            else
+            {
+                Log.Debug("Document already on disk, no save needed.");
+            }
 
-                    ss = comDoc.SelectionSets.Add("OCCT_ALL");
-                    Log.Debug("Created COM SelectionSet 'OCCT_ALL'.");
+            var scriptPath = Path.Combine(tempDir, "_gcad_export.scr");
+            var script = string.Format(CultureInfo.InvariantCulture,
+                // FILEDIA 0: suppress file dialogs
+                // _.OPEN: open the temp copy
+                // _.ZOOM _E: ensure all entities visible
+                // _.-EXPORT: command-line export (prompts: filename, format, selection)
+                // STEP: format keyword
+                // _X 3DSOLID: select all 3D solids via filter
+                // _.QUIT Y: quit without saving
+                "FILEDIA 0\n_.OPEN \"{0}\"\n_.ZOOM _E\n_.-EXPORT \"{1}\" STEP _X 3DSOLID \n_.QUIT Y\n",
+                tempDwg, stepPath);
 
-                    // Try progressive selection strategies based on attempt
-                    if (attempt == 0)
-                    {
-                        // Strategy A: bare Select(acSelectionSetAll) — no filter at all
-                        ss.Select(acSelectionSetAll, null, null, null, null);
-                        Log.Debug(string.Format("Select(4,null,null,null,null): Count={0}", ss.Count));
-                    }
-                    else if (attempt == 1)
-                    {
-                        // Strategy B: Select(acSelectionSetAll) without filter params
-                        ss.Select(acSelectionSetAll);
-                        Log.Debug(string.Format("Select(4): Count={0}", ss.Count));
-                    }
-                    else
-                    {
-                        // Strategy C: filter with int[] (Int32) instead of short[] (Int16)
-                        var filterType = new int[] { 0 };
-                        var filterData = new object[] { "3DSOLID" };
-                        ss.Select(acSelectionSetAll, null, null, filterType, filterData);
-                        Log.Debug(string.Format("Select(4,null,null,int[],object[]): Count={0}", ss.Count));
-                    }
+            Log.Debug(string.Format("Script: {0}", script.Replace("\n", "\\n")));
+            File.WriteAllText(scriptPath, script, System.Text.Encoding.ASCII);
 
-                    if (ss.Count == 0)
+            var psi = new ProcessStartInfo
+            {
+                FileName = gcadExe,
+                Arguments = string.Format("/b \"{0}\"", scriptPath),
+                UseShellExecute = true,
+                WindowStyle = ProcessWindowStyle.Minimized,
+            };
+
+            try
+            {
+                using (var proc = Process.Start(psi))
+                {
+                    if (proc == null)
                     {
-                        Log.Warn(string.Format("Strategy {0}: 0 entities selected.", (char)('A' + attempt)));
-                        ss.Delete();
-                        if (attempt < 2) continue;
-                        ed.WriteMessage("\n所有选择策略均未找到实体. COM SelectionSet.Select 可能不兼容.");
+                        Log.Error("Export script: Process.Start returned null.");
+                        TryDeleteFile(scriptPath);
                         return false;
                     }
 
-                    Log.Debug(string.Format("Calling comDoc.Export(count={0})...", ss.Count));
-                    comDoc.Export(stepPath, "STEP", ss);
-                    Log.Debug("comDoc.Export returned.");
-
-                    ss.Delete();
-
-                    if (File.Exists(stepPath))
+                    Log.Debug(string.Format("Export script PID={0}, waiting up to 90000ms...", proc.Id));
+                    if (!proc.WaitForExit(90000))
                     {
-                        Log.Debug(string.Format("ExportToStep success ({0} bytes).", new FileInfo(stepPath).Length));
-                        return true;
+                        Log.Error("Export script timed out.");
+                        ed.WriteMessage("\n3D STEP导出超时.");
+                        try { proc.Kill(); } catch { }
+                        TryDeleteFile(scriptPath);
+                        return false;
                     }
-                    Log.Warn("Export returned but no file on disk.");
-                }
-                catch (System.Exception ex)
-                {
-                    Log.Error(string.Format("ExportToStep attempt {0} failed: {1}", attempt + 1, ex.Message), ex);
-                    ed.WriteMessage(string.Format("\nCOM Export异常: {0}", ex.Message));
+
+                    Log.Debug(string.Format("Export script exit code: {0}", proc.ExitCode));
                 }
             }
+            catch (System.Exception ex)
+            {
+                Log.Error("Export script: process launch failed.", ex);
+                TryDeleteFile(scriptPath);
+                return false;
+            }
 
-            return false;
+            TryDeleteFile(scriptPath);
+
+            // Clean up temp DWG copy if we created one
+            if (tempDwg != sourceDwg)
+            {
+                TryDeleteFile(tempDwg);
+            }
+
+            var result = File.Exists(stepPath);
+            if (result)
+            {
+                Log.Debug(string.Format("ExportToStep success ({0} bytes).", new FileInfo(stepPath).Length));
+            }
+            else
+            {
+                Log.Error("Export script completed but no STEP output file found.");
+            }
+            return result;
         }
 
         private int RunOCCTTool(string inputStep, string outputStep, Editor ed)
