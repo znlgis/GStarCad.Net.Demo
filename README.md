@@ -35,10 +35,18 @@ GStarCad.Net.Demo/
 │   └── GStarCad.Net.Demo/
 │       ├── Commands/
 │       │   ├── DrawEntityCommand.cs     # 绘图命令
-│       │   ├── FlatExportCommand.cs     # FLATEXPORT 命令（实验性）
+│       │   ├── FlatExportCommand.cs     # FLATEXPORT 命令（已弃用）
 │       │   ├── HelloWorldCommand.cs     # 入门命令
+│       │   ├── HlrExportCommand.cs      # HLREXPORT 命令（已弃用）
+│       │   ├── MeshViewExportCommand.cs # MESHVIEWEXPORT 三视图导出（推荐主线）
 │       │   ├── ModifyEntityCommand.cs   # 修改实体命令
-│       │   └── ViewsExportCommand.cs    # 三维视图导出命令
+│       │   └── ViewsExportCommand.cs    # VIEWEXPORT 命令（已弃用）
+│       ├── Common/
+│       │   ├── StlParser.cs             # STL 网格解析
+│       │   ├── MeshTopology.cs          # 焊接顶点/边邻接 + 特征边分类
+│       │   ├── DepthBuffer.cs           # 正交深度缓冲（Z-buffer 消隐）
+│       │   ├── OrthoProjector.cs        # 三视图特征边投影管线
+│       │   └── ViewArranger.cs          # 第一角布局 + 共线合并 + DWG 输出
 │       ├── Properties/
 │       │   └── launchSettings.json      # VS 调试启动配置
 │       ├── ExtensionApplication.cs      # 插件入口点
@@ -61,7 +69,11 @@ GStarCad.Net.Demo/
 
 ## 演示命令
 
-插件注册了五个 `CommandMethod`，在浩辰 CAD 命令行输入对应命令即可执行。
+插件注册了多个 `CommandMethod`，在浩辰 CAD 命令行输入对应命令即可执行。
+
+> **3D → 2D 视图导出**：推荐使用 **MESHVIEWEXPORT**（自包含托管管线，无需外部依赖，直接输出三视图 DWG）。
+> `VIEWEXPORT` / `HLREXPORT` / `FLATEXPORT` 为历史实验实现，**已弃用**，仅作参考保留，详见
+> `docs/3d-to-2d-export-research.md`。
 
 ### HELLO -- 入门命令
 
@@ -102,7 +114,26 @@ GStarCad.Net.Demo/
 - 将实体颜色设为红色（ColorIndex = 1）
 - 将实体图层设为 "0"
 
-### VIEWEXPORT -- 三维视图导出命令
+### MESHVIEWEXPORT -- 三视图导出命令（推荐主线）
+
+选择 3D 实体，生成符合国标（第一角投影）的**主视图 / 俯视图 / 左视图**三视图 2D 工程图，直接保存为 DWG 文件。整个流程在插件进程内完成，**不依赖 OCCT、不启动第二个 GStarCAD 实例、无需手动另存**。
+
+```
+命令: MESHVIEWEXPORT
+选择对象:   (选择 3DSOLID 实体，支持多选)
+```
+
+功能：
+- 交互式多选 3D 实体（3DSOLID）
+- Step 1：临时提高 `FACETRES` 后 `EXPORT` 导出高精度 STL 网格（导出后自动恢复）
+- Step 2：纯托管管线计算三视图投影
+  - **特征边提取**：仅保留轮廓边（silhouette）、锐边（二面角 > 25°）与边界边，滤除曲面镶嵌噪声线
+  - **Z-buffer 消隐**：将正对相机三角形光栅化到深度缓冲，对每条边逐段判定可见/隐藏
+- Step 3：按第一角投影布局排版（俯视图在主视图正下方、左视图在主视图正右方，长对正/高平齐/宽相等），合并共线线段后输出 DWG
+  - 可见边 → `VISIBLE_EDGES` 层（实线）；隐藏边 → `HIDDEN_EDGES` 层（虚线）
+- 输出到 `temp\{原文件名}_{时间戳}_mesh.dwg`
+
+### VIEWEXPORT -- 三维视图导出命令（已弃用）
 
 选择 3D 实体，生成前/后/左/右四个正交方向的 2D 平面投影，保存为 2D STEP 文件。
 
@@ -111,15 +142,23 @@ GStarCad.Net.Demo/
 选择对象:   (选择 3DSOLID 实体，支持多选)
 ```
 
-功能：
-- 交互式多选 3D 实体（3DSOLID）
-- Step 1：`SendStringToExecute` + `DoEvents` 驱动 GStarCAD 后台导出 SAT/STL 中间文件
-- Step 2：独立 GStarCAD 进程将 SAT 转换为 STEP 格式
-- Step 3：调用外部工具 `OCCTTool.exe`（基于 Open CASCADE HLR）生成 4 视图 2D 投影
-- 输出到 `temp\{原文件名}_{时间戳}_views.stp`（2D STEP 文件）
-- 用户打开 STEP 文件后可用 `SaveAs` 转为 DWG 格式
+> **状态：已弃用。** 该实现依赖外部 `OCCTTool.exe`（Open CASCADE HLR）、需启动第二个
+> GStarCAD 进程做 SAT→STEP 转换，且最终仅输出 STEP 需用户手动另存 DWG，流程脆弱。
+> 请改用 **MESHVIEWEXPORT**。保留仅作参考。
 
-### FLATEXPORT -- 平面投影命令（实验性）
+### HLREXPORT -- HLR 投影导出命令（已弃用）
+
+选择 3D 实体，导出 STL 后调用外部 OCCT 工具做 HLR 隐藏线消除，输出单一投影 DWG。
+
+```
+命令: HLREXPORT
+选择对象:   (选择 3DSOLID 实体，支持多选)
+```
+
+> **状态：已弃用。** 依赖外部 `OCCTTool.exe` 与 Open CASCADE 运行库。请改用
+> **MESHVIEWEXPORT**（同为 HLR 消隐思路，但纯托管、无外部依赖）。
+
+### FLATEXPORT -- 平面投影命令（已弃用）
 
 实验性命令，使用 GStarCAD 原生 `FLATSHOT` + `VPOINT` 命令生成 2D 投影。
 
@@ -127,10 +166,9 @@ GStarCad.Net.Demo/
 命令: FLATEXPORT
 ```
 
-功能：
-- 切换视图到四个正交方向并执行 FLATSHOT
-- 当前状态：**未完全可用** — GStarCAD 的 FLATSHOT 对话框无法以编程方式抑制（缺乏 `-FLATSHOT` 命令行模式），导致流程中断
-- 保留作为参考实现，待官方 API 更新后可能恢复
+> **状态：已弃用。** GStarCAD 的 `FLATSHOT` 对话框无法以编程方式抑制（缺乏 `-FLATSHOT`
+> 命令行模式），且 `SetCurrentView` / `VPOINT` 在编程调用下不可靠，流程无法自动完成。
+> 请改用 **MESHVIEWEXPORT**。保留仅作参考。
 
 ## 日志
 
@@ -185,7 +223,7 @@ dotnet build src/GStarCad.Net.Demo/GStarCad.Net.Demo.csproj -c Debug
 
 ### 4. 测试命令
 
-加载成功后，在命令行依次输入 `HELLO`、`DRAWDEMO`、`MODIFYDEMO`、`VIEWEXPORT`、`FLATEXPORT` 体验各命令功能。
+加载成功后，在命令行输入 `HELLO`、`DRAWDEMO`、`MODIFYDEMO` 体验基础命令；输入 **`MESHVIEWEXPORT`** 体验推荐的三视图导出功能（`VIEWEXPORT`、`HLREXPORT`、`FLATEXPORT` 为已弃用的参考实现）。
 
 ## 调试
 
