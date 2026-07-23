@@ -106,49 +106,28 @@ namespace GStarCad.Net.Demo.Commands
             var timestamp = DateTime.Now.ToString("yyyyMMddHHmmss");
             var baseName = string.Format("{0}_{1}", originalName, timestamp);
 
-            var tempStep3D = Path.Combine(tempDir, baseName + "_3d.igs");
-            var tempStep2D = Path.Combine(tempDir, baseName + "_2d.igs");
+            var tempStep3D = Path.Combine(tempDir, baseName + "_3d.stp");
+            var tempStep2D = Path.Combine(tempDir, baseName + "_2d.stp");
             var outputPath = Path.Combine(tempDir, baseName + "_views.dwg");
 
             Log.Debug(string.Format("Temp dir: {0}, files: 3D={1}, 2D={2}, DWG={3}",
                 tempDir, tempStep3D, tempStep2D, outputPath));
 
-            // Step 1: Export selected 3D solids, convert to STEP if needed
+            // Step 1: Export selected 3D solids as STEP via isolated GStarCAD script
             var stepSw = Stopwatch.StartNew();
-            ed.WriteMessage("\n[1/3] 导出3D几何...");
-            Log.Debug("Step 1: Exporting 3D geometry...");
-            string tempStep3D_actual = tempStep3D;
+            ed.WriteMessage("\n[1/3] 导出3D STEP...");
+            Log.Debug("Step 1: Exporting 3D solids via GStarCAD script process...");
             try
             {
-                if (!ExportIges(ed, objIds, tempStep3D))
+                if (!ExportSolidsToStep(tempStep3D, ed))
                 {
                     stepSw.Stop();
-                    Log.Error(string.Format("Step 1 export failed after {0}ms", stepSw.ElapsedMilliseconds));
+                    Log.Error(string.Format("Step 1 failed after {0}ms", stepSw.ElapsedMilliseconds));
                     ed.WriteMessage("\n3D导出失败.");
                     return;
                 }
-
-                // If ACISOUT produced SAT format, convert SAT → STEP for OCCTTool
-                if (tempStep3D.EndsWith(".igs"))
-                {
-                    var stepPath = Path.ChangeExtension(tempStep3D, ".stp");
-                    ed.WriteMessage("\n  转换 SAT → STEP...");
-                    Log.Debug(string.Format("Converting SAT->STEP: {0} -> {1}", tempStep3D, stepPath));
-                    if (!ConvertToStep(tempStep3D, stepPath, ed))
-                    {
-                        Log.Warn("SAT→STEP conversion failed, trying raw export as input.");
-                        // Fallback: try using the raw export file directly with OCCTTool
-                    }
-                    else
-                    {
-                        TryDeleteFile(tempStep3D);
-                        tempStep3D_actual = stepPath;
-                        Log.Debug("SAT→STEP conversion succeeded.");
-                    }
-                }
-
                 stepSw.Stop();
-                Log.Debug(string.Format("Step 1 complete in {0}ms, input: {1}", stepSw.ElapsedMilliseconds, tempStep3D_actual));
+                Log.Debug(string.Format("Step 1 complete in {0}ms", stepSw.ElapsedMilliseconds));
             }
             catch (System.Exception ex)
             {
@@ -164,7 +143,7 @@ namespace GStarCad.Net.Demo.Commands
             Log.Debug("Step 2: Running OCCTTool...");
             try
             {
-                var toolExitCode = RunOCCTTool(tempStep3D_actual, tempStep2D, ed);
+                var toolExitCode = RunOCCTTool(tempStep2D, tempStep2D, ed);
                 if (toolExitCode != 0)
                 {
                     stepSw.Stop();
@@ -196,8 +175,8 @@ namespace GStarCad.Net.Demo.Commands
             // Step 3: Output 2D IGES (skip DWG conversion to avoid second GStarCAD instance)
             Log.Debug("Pipeline complete, output: " + tempStep2D);
 
-            // Cleanup temp 3D file (no longer needed)
-            TryDeleteFile(tempStep3D_actual);
+            // Cleanup temp 3D file
+            TryDeleteFile(tempStep3D);
 
             sw.Stop();
             Log.Info(string.Format(CultureInfo.InvariantCulture,
@@ -210,48 +189,120 @@ namespace GStarCad.Net.Demo.Commands
             ed.WriteMessage("\n需要 DWG 格式: 打开文件后执行 SAVEAS 保存.");
         }
 
-        private bool ExportIges(Editor ed, ObjectId[] objIds, string exportPath)
+        private bool ExportSolidsToStep(string stepPath, Editor ed)
         {
-            Log.Debug(string.Format("ExportIges (multi-format): {0} objects", objIds.Length));
+            var doc = Application.DocumentManager.MdiActiveDocument;
+            var db = doc.Database;
+            var stem = Path.Combine(Path.GetDirectoryName(stepPath),
+                Path.GetFileNameWithoutExtension(stepPath));
+            var satPath = stem + ".sat";
+            var tempDir = Path.GetDirectoryName(stepPath);
+            var gcadExe = Process.GetCurrentProcess().MainModule.FileName;
 
-            var stem = Path.Combine(
-                Path.GetDirectoryName(exportPath),
-                Path.GetFileNameWithoutExtension(exportPath));
-            string satPath = stem + ".sat";
-            string stlPath = stem + ".stl";
+            Log.Debug(string.Format("ExportSolidsToStep: gcad={0}, sat={1}, step={2}", gcadExe, satPath, stepPath));
 
-            ed.Command("_.FILEDIA", 0);
-
-            // Use _P (Previous selection) at the "Select objects:" prompt
-            // to pick up the entities the user selected via GetSelection()
-            try
+            // 1) Save current DWG to temp copy so second instance can open it
+            if (string.IsNullOrEmpty(db.Filename))
             {
-                ed.Command("_.ACISOUT", "_P", "", satPath, "");
-                if (File.Exists(satPath) && new FileInfo(satPath).Length > 100)
+                var defaultPath = Path.Combine(tempDir, "_untitled.dwg");
+                db.SaveAs(defaultPath, DwgVersion.Current);
+                Log.Debug(string.Format("Untitled doc saved as: {0}", defaultPath));
+            }
+            else
+            {
+                db.Save();
+                Log.Debug(string.Format("Saved to: {0}", db.Filename));
+            }
+
+            var tempDwg = Path.Combine(tempDir, "_export_temp.dwg");
+            File.Copy(db.Filename, tempDwg, true);
+            Log.Debug(string.Format("Copied to temp: {0}", tempDwg));
+
+            // 2) Script: open temp DWG, select all 3DSOLIDs, ACISOUT to SAT
+            var scriptPath = Path.Combine(tempDir, "_export_script.scr");
+            var script = string.Format(CultureInfo.InvariantCulture,
+                "SDI 0\nFILEDIA 0\n_.OPEN \"{0}\"\n_.ZOOM _E\n" +
+                "(if (setq ss (ssget \"_X\" '((0 . \"3DSOLID\")))) (command \"_.ACISOUT\" \"{1}\" ss \"\"))\n" +
+                "_.QUIT Y\n",
+                tempDwg.Replace('\\', '/'), satPath.Replace('\\', '/'));
+
+            File.WriteAllText(scriptPath, script);
+            Log.Debug(string.Format("Script: {0}", script.Replace("\n", "\\n")));
+
+            using (var proc = Process.Start(new ProcessStartInfo
+            {
+                FileName = gcadExe,
+                Arguments = string.Format("/b \"{0}\"", scriptPath),
+                UseShellExecute = true,
+                WindowStyle = ProcessWindowStyle.Minimized,
+            }))
+            {
+                if (proc == null)
                 {
-                    File.Copy(satPath, exportPath, true);
-                    TryDeleteFile(satPath);
-                    Log.Debug("Export: ACISOUT SAT success.");
-                    return true;
+                    Log.Error("Export script: Process.Start returned null.");
+                    TryDeleteFile(tempDwg); TryDeleteFile(scriptPath);
+                    return false;
+                }
+                Log.Debug(string.Format("Export script PID={0}, waiting up to 90000ms...", proc.Id));
+                if (!proc.WaitForExit(90000))
+                {
+                    Log.Error("Export script: timeout after 90s.");
+                    try { proc.Kill(); } catch { }
+                    TryDeleteFile(tempDwg); TryDeleteFile(scriptPath);
+                    return false;
+                }
+                Log.Debug(string.Format("Export script exit code: {0}", proc.ExitCode));
+            }
+
+            TryDeleteFile(scriptPath);
+            TryDeleteFile(tempDwg);
+
+            if (!File.Exists(satPath) || new FileInfo(satPath).Length < 100)
+            {
+                Log.Error(string.Format("Export script: SAT file missing or too small: {0}", satPath));
+                return false;
+            }
+
+            Log.Debug(string.Format("SAT exported: {0} ({1} bytes)", satPath, new FileInfo(satPath).Length));
+
+            // 3) Convert SAT → STEP for OCCTTool
+            var convertScriptPath = Path.Combine(tempDir, "_convert_script.scr");
+            var convert = string.Format(CultureInfo.InvariantCulture,
+                "FILEDIA 0\n_.OPEN \"{0}\"\n_.SAVEAS 2018 \"{1}\"\n_.QUIT Y\n",
+                satPath.Replace('\\', '/'), stepPath.Replace('\\', '/'));
+
+            File.WriteAllText(convertScriptPath, convert);
+
+            using (var proc = Process.Start(new ProcessStartInfo
+            {
+                FileName = gcadExe,
+                Arguments = string.Format("/b \"{0}\"", convertScriptPath),
+                UseShellExecute = true,
+                WindowStyle = ProcessWindowStyle.Minimized,
+            }))
+            {
+                if (proc == null)
+                {
+                    Log.Error("Convert script: Process.Start returned null.");
+                    TryDeleteFile(convertScriptPath); TryDeleteFile(satPath);
+                    return false;
+                }
+                Log.Debug(string.Format("Convert script PID={0}, waiting...", proc.Id));
+                if (!proc.WaitForExit(60000))
+                {
+                    Log.Error("Convert script: timeout.");
+                    try { proc.Kill(); } catch { }
+                    TryDeleteFile(convertScriptPath); TryDeleteFile(satPath);
+                    return false;
                 }
             }
-            catch (System.Exception ex) { Log.Debug("ACISOUT: " + ex.Message); }
 
-            try
-            {
-                ed.Command("_.EXPORT", "_P", "", stlPath, "");
-                if (File.Exists(stlPath) && new FileInfo(stlPath).Length > 100)
-                {
-                    File.Copy(stlPath, exportPath, true);
-                    TryDeleteFile(stlPath);
-                    Log.Debug("Export: STL success.");
-                    return true;
-                }
-            }
-            catch (System.Exception ex) { Log.Debug("STL export: " + ex.Message); }
+            TryDeleteFile(convertScriptPath);
+            TryDeleteFile(satPath);
 
-            Log.Error("All export formats failed.");
-            return false;
+            var result = File.Exists(stepPath);
+            Log.Debug(string.Format("ExportSolidsToStep: result={0}, step={1}", result, stepPath));
+            return result;
         }
 
         private int RunOCCTTool(string inputStep, string outputStep, Editor ed)
@@ -357,143 +408,6 @@ namespace GStarCad.Net.Demo.Commands
                 Log.Error("Exception starting OCCTTool process.", ex);
                 ed.WriteMessage(string.Format("\n启动 OCCTTool 异常: {0}", ex.Message));
                 return -4;
-            }
-        }
-
-        private bool ConvertToStep(string inputPath, string outputPath, Editor ed)
-        {
-            Log.Debug(string.Format("ConvertToStep: input='{0}', output='{1}'", inputPath, outputPath));
-
-            try
-            {
-                var gcadExe = Process.GetCurrentProcess().MainModule.FileName;
-                var scriptDir = Path.GetDirectoryName(outputPath);
-                var scriptPath = Path.Combine(scriptDir, "_gcad_convert.scr");
-
-                var script = string.Format(CultureInfo.InvariantCulture,
-                    "FILEDIA 0\n_.OPEN \"{0}\"\n_.SAVEAS 2018 \"{1}\"\n_.QUIT Y\n",
-                    inputPath.Replace('\\', '/'), outputPath.Replace('\\', '/'));
-
-                Log.Debug(string.Format("ConvertToStep script: {0}", script.Replace("\n", "\\n")));
-                File.WriteAllText(scriptPath, script);
-
-                var psi = new ProcessStartInfo
-                {
-                    FileName = gcadExe,
-                    Arguments = string.Format("/b \"{0}\"", scriptPath),
-                    UseShellExecute = true,
-                    WindowStyle = ProcessWindowStyle.Minimized,
-                };
-
-                Log.Debug(string.Format("Starting GStarCAD conversion: {0} /b \"{1}\"", gcadExe, scriptPath));
-
-                using (var proc = Process.Start(psi))
-                {
-                    if (proc == null)
-                    {
-                        Log.Error("ConvertToStep: Process.Start returned null.");
-                        ed.WriteMessage("\n无法启动GStarCAD进行格式转换.");
-                        TryDeleteFile(scriptPath);
-                        return false;
-                    }
-
-                    if (!proc.WaitForExit(60000))
-                    {
-                        Log.Error("ConvertToStep: GStarCAD timed out.");
-                        ed.WriteMessage("\nGStarCAD转换超时.");
-                        try { proc.Kill(); } catch { }
-                        TryDeleteFile(scriptPath);
-                        return false;
-                    }
-
-                    Log.Debug(string.Format("ConvertToStep: GStarCAD exited with code {0}", proc.ExitCode));
-                }
-
-                TryDeleteFile(scriptPath);
-
-                var result = File.Exists(outputPath);
-                Log.Debug(string.Format("ConvertToStep: result={0}, output='{1}'", result, outputPath));
-                return result;
-            }
-            catch (System.Exception ex)
-            {
-                Log.Error("ConvertToStep failed with exception.", ex);
-                return false;
-            }
-        }
-
-        private bool ConvertStepToDwg(string stepPath, string dwgPath, Editor ed)
-        {
-            Log.Debug(string.Format("ConvertStepToDwg: STEP='{0}', DWG='{1}'", stepPath, dwgPath));
-
-            try
-            {
-                // Launch an isolated GStarCAD process with a script file to avoid
-                // COM re-entrancy and document switching during active command execution.
-                var gcadExe = Process.GetCurrentProcess().MainModule.FileName;
-                Log.Debug(string.Format("GStarCAD executable: {0}", gcadExe));
-
-                var scriptDir = Path.GetDirectoryName(dwgPath);
-                var scriptPath = Path.Combine(scriptDir, "_gcad_convert.scr");
-
-                var script = string.Format(CultureInfo.InvariantCulture,
-                    "FILEDIA 0\n_.OPEN \"{0}\"\n_.SAVEAS 2018 \"{1}\"\n_.QUIT Y\n",
-                    stepPath, dwgPath);
-                Log.Debug(string.Format("Writing script to {0}: {1}", scriptPath, script.Replace("\n", "\\n")));
-                File.WriteAllText(scriptPath, script);
-
-                var psi = new ProcessStartInfo
-                {
-                    FileName = gcadExe,
-                    Arguments = string.Format("/b \"{0}\"", scriptPath),
-                    UseShellExecute = true,
-                    WindowStyle = ProcessWindowStyle.Minimized,
-                };
-
-                Log.Debug(string.Format("Starting GStarCAD: {0} /b \"{1}\"", gcadExe, scriptPath));
-
-                using (var proc = Process.Start(psi))
-                {
-                    if (proc == null)
-                    {
-                        Log.Error("Process.Start returned null for GStarCAD conversion process.");
-                        ed.WriteMessage("\n无法启动GStarCAD进程进行转换.");
-                        TryDeleteFile(scriptPath);
-                        return false;
-                    }
-
-                    Log.Debug(string.Format("GStarCAD conversion process started, PID={0}, waiting up to 60000ms...", proc.Id));
-
-                    if (!proc.WaitForExit(60000))
-                    {
-                        Log.Error("GStarCAD conversion process timed out after 60000ms.");
-                        ed.WriteMessage("\nGStarCAD转换进程超时.");
-                        try { proc.Kill(); } catch { }
-                        TryDeleteFile(scriptPath);
-                        return false;
-                    }
-
-                    Log.Debug(string.Format("GStarCAD conversion process exited with code {0}", proc.ExitCode));
-                }
-
-                TryDeleteFile(scriptPath);
-
-                var result = File.Exists(dwgPath);
-                if (result)
-                {
-                    Log.Debug(string.Format("ConvertStepToDwg succeeded: {0}", dwgPath));
-                }
-                else
-                {
-                    Log.Error(string.Format("ConvertStepToDwg: GStarCAD exited but no DWG output at {0}", dwgPath));
-                }
-                return result;
-            }
-            catch (System.Exception ex)
-            {
-                Log.Error("ConvertStepToDwg failed with exception.", ex);
-                ed.WriteMessage(string.Format("\nSTEP→DWG转换失败: {0}", ex.Message));
-                return false;
             }
         }
 
